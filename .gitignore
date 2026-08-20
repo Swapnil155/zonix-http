@@ -7,5 +7,6 @@ bench/.baseline-build/
 bench/.baseline-src/
 bench/.micro-baseline.json
 bench/.baseline.json
+bench/.final.json
 *.log
 .DS_Store
