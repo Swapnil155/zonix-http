@@ -3,15 +3,21 @@ import { EMPTY, type Handler, type Middleware, type StringMap } from "./types.js
 
 export interface RouteMatch {
   params: StringMap;
-  middleware: readonly Middleware[];
-  handler: Handler;
+  route: Route;
 }
 
 /** A registered endpoint. `paramNames` is zipped with the values captured during the walk. */
-interface Route {
+export interface Route {
   middleware: readonly Middleware[];
   handler: Handler;
   paramNames: readonly string[];
+  /**
+   * Cache slot owned by the app: this route's global + route middleware +
+   * handler, flattened into one array. Built on first use and reused until
+   * `pipelineVersion` no longer matches the app's global-middleware version.
+   */
+  pipeline: Middleware[] | undefined;
+  pipelineVersion: number;
 }
 
 /**
@@ -58,10 +64,13 @@ export class Router {
     const segments = splitPath(path);
     const paramNames: string[] = [];
 
-    let tree = this.#methods.get(method.toLowerCase());
+    // Stored uppercase because that is how `req.method` arrives off the wire:
+    // the hot path then needs no per-request case conversion.
+    const key = method.toUpperCase();
+    let tree = this.#methods.get(key);
     if (tree === undefined) {
       tree = { root: new Node(), exact: new Map() };
-      this.#methods.set(method.toLowerCase(), tree);
+      this.#methods.set(key, tree);
     }
 
     let node = tree.root;
@@ -132,7 +141,13 @@ export class Router {
       );
     }
 
-    const route: Route = { middleware, handler, paramNames };
+    const route: Route = {
+      middleware,
+      handler,
+      paramNames,
+      pipeline: undefined,
+      pipelineVersion: -1,
+    };
     node.route = route;
     if (!dynamic) tree.exact.set(normalize(path), route);
   }
@@ -143,31 +158,38 @@ export class Router {
    * @throws a 400-tagged framework error when a segment cannot be percent-decoded.
    */
   find(method: string, path: string): RouteMatch | undefined {
-    const tree = this.#methods.get(method.toLowerCase());
-    if (tree === undefined) return undefined;
+    // Direct hit first: `req.method` is already uppercase for every well-formed
+    // request. The fallback keeps matching case-insensitive for anything odd.
+    let tree = this.#methods.get(method);
+    if (tree === undefined) {
+      tree = this.#methods.get(method.toUpperCase());
+      if (tree === undefined) return undefined;
+    }
 
     // Fast path: no encoding to undo, no trailing slash to trim, fully static route.
     if (path.indexOf("%") === -1) {
       const direct = tree.exact.get(path);
-      if (direct !== undefined) {
-        return { params: EMPTY, middleware: direct.middleware, handler: direct.handler };
-      }
-    }
-
-    const segments = splitPath(path);
-    for (let i = 0; i < segments.length; i++) {
-      segments[i] = decodeSegment(segments[i] as string, path);
+      if (direct !== undefined) return { params: EMPTY, route: direct };
     }
 
     const captured: string[] = [];
-    const route = walk(tree.root, segments, 0, captured);
+    let route: Route | undefined;
+    if (path.indexOf("%") === -1) {
+      // Common case: nothing to decode, so the tree is descended straight off
+      // the URL string with no segment array and no second pass.
+      route = walkPath(tree.root, path, 1, captured);
+    } else {
+      // Percent-encoded: decode every segment up front, exactly as v1 did, so a
+      // malformed escape anywhere in the URL is a 400 even if nothing matches.
+      const segments = splitPath(path);
+      for (let i = 0; i < segments.length; i++) {
+        segments[i] = decodeSegment(segments[i] as string, path);
+      }
+      route = walk(tree.root, segments, 0, captured);
+    }
     if (route === undefined) return undefined;
 
-    return {
-      params: zip(route.paramNames, captured),
-      middleware: route.middleware,
-      handler: route.handler,
-    };
+    return { params: zip(route.paramNames, captured), route };
   }
 }
 
@@ -211,6 +233,56 @@ function walk(
   const wildcard = node.wildcardChild;
   if (wildcard?.route !== undefined) {
     captured.push(segments.slice(index).join("/"));
+    return wildcard.route;
+  }
+
+  return undefined;
+}
+
+/**
+ * The same descent as `walk`, driven straight off the URL string.
+ *
+ * `start` is the index just past the slash that introduced this level. Repeated
+ * slashes are skipped here, which is what makes `/a//b` and `/a/b` the same
+ * route without a normalization pass. Only reached for paths with no percent
+ * escapes, so no segment ever needs decoding.
+ */
+function walkPath(node: Node, path: string, start: number, captured: string[]): Route | undefined {
+  const length = path.length;
+  let from = start;
+  while (from < length && path.charCodeAt(from) === 47 /* '/' */) from++;
+
+  if (from >= length) {
+    if (node.route !== undefined) return node.route;
+    const wildcard = node.wildcardChild;
+    if (wildcard?.route !== undefined) {
+      captured.push("");
+      return wildcard.route;
+    }
+    return undefined;
+  }
+
+  let end = path.indexOf("/", from);
+  if (end === -1) end = length;
+  const segment = path.slice(from, end);
+
+  const staticChild = node.staticChildren?.get(segment);
+  if (staticChild !== undefined) {
+    const found = walkPath(staticChild, path, end, captured);
+    if (found !== undefined) return found;
+  }
+
+  if (node.paramChild !== undefined) {
+    captured.push(segment);
+    const found = walkPath(node.paramChild, path, end, captured);
+    if (found !== undefined) return found;
+    captured.pop();
+  }
+
+  const wildcard = node.wildcardChild;
+  if (wildcard?.route !== undefined) {
+    // The tail keeps v1's shape: empty segments collapsed, joined with "/".
+    captured.push(splitPath(path.slice(from - 1)).join("/"));
     return wildcard.route;
   }
 

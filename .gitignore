@@ -1,5 +1,11 @@
 node_modules/
 dist/
 bench/.results/
+bench/.fixtures/
+bench/.profile/
+bench/.baseline-build/
+bench/.baseline-src/
+bench/.micro-baseline.json
+bench/.baseline.json
 *.log
 .DS_Store

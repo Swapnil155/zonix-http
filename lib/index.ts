@@ -9,7 +9,7 @@ import {
 } from "./errors.js";
 import { ZonixRequest } from "./request.js";
 import { ZonixResponse } from "./response.js";
-import { Router, type RouteMatch } from "./router.js";
+import { Router, type Route, type RouteMatch } from "./router.js";
 import type {
   ErrorHandler,
   Handler,
@@ -25,57 +25,67 @@ const METHODS: readonly HttpMethod[] = ["get", "post", "put", "patch", "delete",
 /**
  * Run a chain of middleware to completion.
  *
- * Resolves when the chain is exhausted, rejects with the first error surfaced by
- * `next(err)`, a synchronous throw, or a rejected promise. Never advances on its
- * own: like Express, a middleware that neither responds nor calls `next()` parks
- * the request.
+ * Synchronous by design: a chain whose middleware all call `next()` inline
+ * finishes without allocating a promise or scheduling a microtask. Async
+ * machinery is entered only when a middleware actually returns a thenable.
+ * `onError` receives the first error surfaced by `next(err)`, a synchronous
+ * throw or a rejected promise, and is called at most once. Like Express, a
+ * middleware that neither responds nor calls `next()` simply parks the request.
  */
 function runChain(
   chain: readonly Middleware[],
   req: ZonixRequest,
   res: ZonixResponse,
   dev: boolean,
-): Promise<void> {
-  return new Promise<void>((resolve, reject) => {
-    const step = (index: number): void => {
-      const mw = chain[index];
-      if (mw === undefined) {
-        resolve();
+  onError: (err: unknown) => void,
+): void {
+  // Once the chain has finished or failed, a late rejection from a middleware
+  // that already called next() is ignored - the same as a settled promise.
+  let settled = false;
+  const fail = (err: unknown): void => {
+    if (settled) return;
+    settled = true;
+    onError(err);
+  };
+
+  const step = (index: number): void => {
+    const mw = chain[index];
+    if (mw === undefined) {
+      settled = true;
+      return;
+    }
+
+    let advanced = false;
+    const next: Next = (err) => {
+      if (advanced) {
+        if (dev) {
+          console.warn(
+            `zonix: next() called more than once by middleware #${index} for ` +
+              `${req.method} ${req.url} - the extra call was ignored`,
+          );
+        }
         return;
       }
-
-      let advanced = false;
-      const next: Next = (err) => {
-        if (advanced) {
-          if (dev) {
-            console.warn(
-              `zonix: next() called more than once by middleware #${index} for ` +
-                `${req.method} ${req.url} - the extra call was ignored`,
-            );
-          }
-          return;
-        }
-        advanced = true;
-        if (err !== undefined && err !== null) {
-          reject(err);
-          return;
-        }
-        step(index + 1);
-      };
-
-      let result: unknown;
-      try {
-        result = mw(req, res, next);
-      } catch (err) {
-        reject(err);
+      advanced = true;
+      if (err !== undefined && err !== null) {
+        fail(err);
         return;
       }
-      // A rejection is an error; resolving does NOT advance the chain.
-      if (isThenable(result)) result.then(undefined, reject);
+      step(index + 1);
     };
 
-    step(0);
-  });
+    let result: unknown;
+    try {
+      result = mw(req, res, next);
+    } catch (err) {
+      fail(err);
+      return;
+    }
+    // A rejection is an error; resolving does NOT advance the chain.
+    if (isThenable(result)) result.then(undefined, fail);
+  };
+
+  step(0);
 }
 
 function isThenable(value: unknown): value is PromiseLike<unknown> {
@@ -92,6 +102,10 @@ export class Zonix {
   readonly server: http.Server<typeof ZonixRequest, typeof ZonixResponse>;
 
   readonly #globals: Middleware[] = [];
+  /** Bumped whenever the global chain or the fallback changes, invalidating cached pipelines. */
+  #globalsVersion = 0;
+  #missPipeline: Middleware[] | undefined = undefined;
+  #missPipelineVersion = -1;
   readonly #router = new Router();
   readonly #dev: boolean;
   #errHandler: ErrorHandler | undefined = undefined;
@@ -131,6 +145,7 @@ export class Zonix {
       }
       this.#globals.push(mw);
     }
+    this.#globalsVersion++;
     return this;
   }
 
@@ -209,6 +224,7 @@ export class Zonix {
       );
     }
     this.#fallback = handler;
+    this.#globalsVersion++;
     return this;
   }
 
@@ -234,7 +250,7 @@ export class Zonix {
   #handle(req: ZonixRequest, res: ZonixResponse): void {
     let match;
     try {
-      match = this.#router.find(req.method ?? "get", req.path);
+      match = this.#router.find(req.method ?? "GET", req.path);
     } catch (err) {
       this.#fail(err, req, res);
       return;
@@ -242,10 +258,10 @@ export class Zonix {
 
     // Fast path: a matched route with nothing to run but its own handler. Skips
     // the chain array, the chain promise and the per-step closures entirely.
-    if (match !== undefined && this.#globals.length === 0 && match.middleware.length === 0) {
+    if (match !== undefined && this.#globals.length === 0 && match.route.middleware.length === 0) {
       req.params = match.params;
       try {
-        const result = match.handler(req, res, (err) => {
+        const result = match.route.handler(req, res, (err) => {
           // A lone handler calling next() has nowhere to advance to, but
           // next(err) must still reach dispatch exactly as it would in a chain.
           if (err !== undefined && err !== null) this.#fail(err, req, res);
@@ -257,32 +273,54 @@ export class Zonix {
       return;
     }
 
-    void this.#runChain(match, req, res);
+    this.#runChain(match, req, res);
   }
 
-  async #runChain(
-    match: RouteMatch | undefined,
-    req: ZonixRequest,
-    res: ZonixResponse,
-  ): Promise<void> {
+  #runChain(match: RouteMatch | undefined, req: ZonixRequest, res: ZonixResponse): void {
     try {
-      const chain: Middleware[] = [...this.#globals];
-
+      let chain: Middleware[];
       if (match !== undefined) {
         req.params = match.params;
-        chain.push(...match.middleware, match.handler);
-      } else if (this.#fallback !== undefined) {
-        chain.push(this.#fallback);
+        chain = this.#pipelineFor(match.route);
       } else {
-        chain.push((r, s) => {
-          this.#notFound(r, s);
-        });
+        chain = this.#pipelineForMiss();
       }
 
-      await runChain(chain, req, res, this.#dev);
+      runChain(chain, req, res, this.#dev, (err) => this.#fail(err, req, res));
     } catch (err) {
-      await this.#dispatchError(err, req, res);
+      this.#fail(err, req, res);
     }
+  }
+
+  /**
+   * The flattened global + route middleware + handler array for a route, built
+   * once and reused. Rebuilt only if `use()` or `fallback()` ran since, so
+   * registering middleware after the server is serving stays correct.
+   */
+  #pipelineFor(route: Route): Middleware[] {
+    const cached = route.pipeline;
+    if (cached !== undefined && route.pipelineVersion === this.#globalsVersion) return cached;
+
+    const chain: Middleware[] = [...this.#globals, ...route.middleware, route.handler];
+    route.pipeline = chain;
+    route.pipelineVersion = this.#globalsVersion;
+    return chain;
+  }
+
+  /** Same, for requests that matched no route. */
+  #pipelineForMiss(): Middleware[] {
+    const cached = this.#missPipeline;
+    if (cached !== undefined && this.#missPipelineVersion === this.#globalsVersion) return cached;
+
+    const terminal: Middleware =
+      this.#fallback ??
+      ((r, s) => {
+        this.#notFound(r, s);
+      });
+    const chain: Middleware[] = [...this.#globals, terminal];
+    this.#missPipeline = chain;
+    this.#missPipelineVersion = this.#globalsVersion;
+    return chain;
   }
 
   /** Hand an error to central dispatch from a non-async context. */

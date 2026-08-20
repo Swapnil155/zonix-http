@@ -23,9 +23,11 @@
     "build": "tsup lib/index.ts --format esm --dts --clean",
     "test": "node scripts/run-tests.mjs",
     "typecheck": "tsc --noEmit",
-    "bench": "bash bench/run.sh",
+    "bench": "npm run build && node bench/run.mjs",
     "format": "prettier --write \"{lib,test,bench,examples}/**/*.{ts,js}\" \"*.{json,md}\"",
-    "example": "tsx examples/basic.ts"
+    "example": "tsx examples/basic.ts",
+    "profile": "npm run build && node bench/profile.mjs",
+    "micro": "tsx bench/micro.ts"
   },
   "keywords": [
     "http",

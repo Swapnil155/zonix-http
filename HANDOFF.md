@@ -1,57 +1,40 @@
 # HANDOFF
 
-**Phase:** 5 complete — v1 done. All five phases green.
+**Phase:** 5.5 — steps 1–2 done through item 6. **Stopped at item 7 awaiting Swapnil's serializer decision.**
 
-## Done
+## Done this session
 
-- **Phase 0** — scaffold: package.json (ESM, zero runtime deps, engines >=20), tsconfig strict +
-  `noUncheckedIndexedAccess`, prettier, git init.
-- **Phase 1** — core loop: `ZonixRequest`/`ZonixResponse` via `createServer({ IncomingMessage, ServerResponse })`,
-  global `use()` chain, `status/json/redirect`, central error dispatch, default 404, `listen/close/address/server`.
-- **Phase 2** — radix router: segment-keyed tree per method, params, tail wildcard, static > param > wildcard with
-  backtracking, trailing/repeated-slash normalization, per-segment decode (malformed -> 400), duplicate and
-  bad-pattern detection, `fallback()`, exact-path `Map` fast path.
-- **Phase 3** — `res.sendFile()` (stat -> MIME table -> `pipeline()`), `res.attachment()`, disconnect tagging,
-  headersSent guards, double-fault path.
-- **Phase 4** — batteries: `parseJSON`, `serveStatic`, `cookieParser`, `cors`.
-- **Phase 5** — bench harness (`npm run bench`) and README with the recorded table.
+- **Step 1 (instrumentation).** Bench matrix expanded to 6 scenarios × 3 frameworks (`bench/servers/`,
+  `bench/run.mjs`, `bench/run.sh` now a wrapper). `npm run profile` = `--cpu-prof` + a self-time ranking so the
+  "flamegraph before guessing" rule works from the terminal. Added `bench/ab.mjs` (end-to-end A/B),
+  `bench/micro.ts` + `bench/micro-ab.mjs` (router A/B), `bench/snapshot.mjs`. All results in `bench/results.md`.
+- **Step 2 items 1–6.** 1 and 2 were already satisfied in v1 (verified with `curl -v` / code, no change).
+  3, 4, 5, 6 implemented and kept, each with a recorded number. Chain scenario is the big winner:
+  `#runChain` self time 4.91% → gone, zonix's own frames on chain 9.1% → 3.4%, end-to-end +5.0% then +6.5%.
+- **Performance rule 3 satisfied:** `test/fastpath.test.ts` proves fast path and full chain produce byte-identical
+  wire output across 12 targets (incl. errors, sendFile, redirect, 404) and that both funnel through one dispatcher.
+- **Amendment A2 applied:** `ERR_STREAM_DESTROYED` added to the disconnect code list.
+- 147 tests green on Node 22.20.0 **and** 20.20.2; typecheck, build, prettier clean; still zero runtime deps.
 
-## Definition of done — verified
+## Two findings that change how this repo measures
 
-- 141 tests pass on **Node 22.20.0 and Node 20.20.2** (both run, not assumed).
-- `tsc --noEmit` clean, `tsup` build clean (ESM + .d.ts), prettier clean.
-- `package.json` has **no** `dependencies` key.
-- `examples/basic.ts` exercises every public feature; smoke-tested over curl.
-- Bench (2 consistent runs, `-c 100 -p 10 -d 10`): zonix **133,862 rps** vs express 26,307 (5.1x, target was
-  >= express) and fastify 149,133 (zonix at ~90%, i.e. ~11% behind; target was within ~15%).
+1. **End-to-end noise floor here is ~5%** (proved by A/B-ing a build against itself in four harness designs;
+   fastify drifted +21% between sessions). **Absolute cross-session rps must not be compared** — use
+   `bench/ab.mjs` paired deltas, profile self-time shares, or same-session ratios.
+2. **zonix's own code is 3.4–9.1% of a request** (`writev` alone is 45%). So the "< 1% on its target scenario
+   gets reverted" rule cannot be adjudicated end-to-end for router-level work — the subsystem is smaller than
+   the noise. Items 4 and 5 were **kept as a deliberate deviation** (see `bench/results.md`); if the rule is read
+   strictly, **item 5 is the one to revert** — item 4 costs no complexity.
 
-## Deviations from CLAUDE.md (accepted)
+## Next
 
-- Handler/Middleware return type is `unknown`, not `void | Promise<void>`: the union breaks TS's void-return
-  exemption, which would reject the idiomatic `(req, res) => res.status(204).end()`. Promises still detected at runtime.
-- `#dispatchError` calls `handleErr` **even when headersSent** (socket destroyed first, writes swallowed) so the
-  disconnect test's "handleErr sees clientDisconnect: true" holds. Decision 5 reads as destroy-and-stop.
-- Default error responder honours `err.status` for 4xx (needed for malformed-encoding -> 400); 5xx still returns
-  the generic `Internal Server Error` with no message or stack.
-- Disconnect tagging extends decision 6: an aborted write surfaces as `ERR_STREAM_DESTROYED`, outside the code
-  list, so dispatch also tags `clientDisconnect` when `req.destroyed && !res.writableFinished`. Verified against
-  real aborts.
-- `res.sendFile()` returns a promise but self-attaches a rejection handler: an un-awaited failure routes to
-  `handleErr` via a response error sink instead of becoming an unhandled rejection, WeakSet-deduped so an awaited
-  failure dispatches exactly once.
-- Added `req.path`; `query`/`params`/`cookies` are null-prototype objects.
-- Router extras: `/files/*` also matches `/files` (captures `""`), repeated slashes collapse, duplicate param
-  names throw. HEAD does **not** fall back to GET routes (keeps method isolation as specified) — README roadmap.
-- Middleware extras, safely defaulted: `serveStatic` ignores dotfiles by default (`.env` never served) and takes
-  `index`; `parseJSON` rejects an oversized `Content-Length` before reading and takes `type`; `cors` sets `Vary`
-  and reflects the origin instead of `*` when `credentials: true`.
-- Added `scripts/run-tests.mjs` (not in the planned layout): Node 20's test runner rejects glob patterns and
-  cmd.exe will not expand one, so the runner enumerates `test/*.test.ts` itself. Zero dependencies.
+1. **Item 7 — decide Option A (closures) vs Option B (codegen + ban exception).** Fully measured, nothing
+   implemented. Recommendation and numbers in `bench/results.md`; short version: most of the win is the escaping
+   technique, which Option A also gets; B's remaining edge is worth ~0.3–0.8% end-to-end.
+2. Item 8 (GC audit, `--trace-gc`) — not started.
+3. Phase 5.5 exit bar (≥95% of Fastify on hello) **is not met and not currently measurable** — 89.1% this
+   session, 108% last session for the same build. Needs a quiet machine before it can be certified either way.
 
-## Next (post-v1 candidates)
+## Blockers
 
-Signed cookies, HEAD falling back to GET, and the two `stat` calls per `serveStatic` hit collapsed into one.
-
-## Blockers / open questions
-
-None.
+Item 7 decision. Item 8 and the exit bar are unblocked but should follow it.

@@ -1,0 +1,192 @@
+{
+  "node": "v22.20.0",
+  "runs": 3,
+  "results": {
+    "zonix": {
+      "hello": {
+        "rps": 136663.28,
+        "samples": [
+          136793.6,
+          135104,
+          136663.28
+        ],
+        "spreadPct": 1.2363233196217782,
+        "badResponses": 0
+      },
+      "param": {
+        "rps": 133280,
+        "samples": [
+          133280,
+          133248,
+          136467.21
+        ],
+        "spreadPct": 2.4153736494597777,
+        "badResponses": 0
+      },
+      "chain": {
+        "rps": 134150.4,
+        "samples": [
+          136128,
+          134150.4,
+          133619.21
+        ],
+        "spreadPct": 1.8701323290873588,
+        "badResponses": 0
+      },
+      "notfound": {
+        "rps": 129664,
+        "samples": [
+          129664,
+          129721.6,
+          128588.8
+        ],
+        "spreadPct": 0.8736426456071098,
+        "badResponses": 648655
+      },
+      "file-1kb": {
+        "rps": 11815.2,
+        "samples": [
+          11476,
+          11834.4,
+          11815.2
+        ],
+        "spreadPct": 3.033380729907235,
+        "badResponses": 0
+      },
+      "file-1mb": {
+        "rps": 1595.6,
+        "samples": [
+          1616.4,
+          1595.6,
+          1442.2
+        ],
+        "spreadPct": 10.917523188769119,
+        "badResponses": 0
+      }
+    },
+    "express": {
+      "hello": {
+        "rps": 23071.28,
+        "samples": [
+          23072.73,
+          23011.2,
+          23071.28
+        ],
+        "spreadPct": 0.26669521587011574,
+        "badResponses": 0
+      },
+      "param": {
+        "rps": 23870.4,
+        "samples": [
+          23915.2,
+          23870.4,
+          23828.8
+        ],
+        "spreadPct": 0.361954554594818,
+        "badResponses": 0
+      },
+      "chain": {
+        "rps": 24270.4,
+        "samples": [
+          24270.4,
+          25131.2,
+          24056
+        ],
+        "spreadPct": 4.430087678818646,
+        "badResponses": 0
+      },
+      "notfound": {
+        "rps": 22542.4,
+        "samples": [
+          21665.6,
+          22542.4,
+          22708.8
+        ],
+        "spreadPct": 4.6277237561218,
+        "badResponses": 113563
+      },
+      "file-1kb": {
+        "rps": 14034.4,
+        "samples": [
+          13791.2,
+          14461.6,
+          14034.4
+        ],
+        "spreadPct": 4.776834064869176,
+        "badResponses": 0
+      },
+      "file-1mb": {
+        "rps": 1777.8,
+        "samples": [
+          1727.8,
+          1777.8,
+          1780.4
+        ],
+        "spreadPct": 2.958713016087307,
+        "badResponses": 0
+      }
+    },
+    "fastify": {
+      "hello": {
+        "rps": 153382.4,
+        "samples": [
+          151436.8,
+          153382.4,
+          153523.21
+        ],
+        "spreadPct": 1.360266888508723,
+        "badResponses": 0
+      },
+      "param": {
+        "rps": 152102.4,
+        "samples": [
+          149004.8,
+          153024,
+          152102.4
+        ],
+        "spreadPct": 2.642430362703029,
+        "badResponses": 0
+      },
+      "chain": {
+        "rps": 149260.8,
+        "samples": [
+          148620.8,
+          150515.21,
+          149260.8
+        ],
+        "spreadPct": 1.2691945909441753,
+        "badResponses": 0
+      },
+      "notfound": {
+        "rps": 141222.4,
+        "samples": [
+          143296,
+          141222.4,
+          139686.4
+        ],
+        "spreadPct": 2.555968458261583,
+        "badResponses": 716516
+      },
+      "file-1kb": {
+        "rps": 12072.8,
+        "samples": [
+          12072.8,
+          12472.8,
+          11996
+        ],
+        "spreadPct": 3.9493737989530127,
+        "badResponses": 0
+      },
+      "file-1mb": {
+        "rps": 1682.2,
+        "samples": [
+          1660.8,
+          1682.2,
+          1715.6
+        ],
+        "spreadPct": 3.257638806325048,
+        "badResponses": 0
+      }
+    }
+  }
+}

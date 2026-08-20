@@ -54,7 +54,13 @@ export function wasDispatched(err: unknown): boolean {
 }
 
 /** Socket-level codes that mean "the client left", not "we broke". */
-const DISCONNECT_CODES = new Set(["ECONNRESET", "EPIPE", "ERR_STREAM_PREMATURE_CLOSE"]);
+const DISCONNECT_CODES = new Set([
+  "ECONNRESET",
+  "EPIPE",
+  "ERR_STREAM_PREMATURE_CLOSE",
+  // Amendment A2: an aborted write surfaces as this rather than a socket code.
+  "ERR_STREAM_DESTROYED",
+]);
 
 /**
  * Build a tagged framework error. `fn` is the public function to cut the stack at,

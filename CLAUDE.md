@@ -9,7 +9,19 @@ A zero-dependency, Express-compatible Node.js HTTP framework in TypeScript, buil
 
 Architectural reference: **cpeak** (github.com/Cododev-Technology/cpeak, MIT, ~2,000 LOC). We are building in the same family — custom req/res subclasses, radix router, recursive middleware chain, central error dispatch — but writing our own implementation, not copying files. When stuck on an edge case, cpeak's source is the answer key; understand it, then implement independently.
 
-Working name `zonix` (from Zonixtec). Rename is a find-replace; verify npm availability before any publish.
+Working name `zonix` (from Zonixtec). **npm status (checked 2026-08):** `zonix` is taken; `zonix-http` and `zonixjs` are free; scoped `@zonixtec/zonix` always works. Pick before Phase 9; rename is a find-replace.
+
+**Scale expectations:** full scope (all phases) lands around 5–7k LOC in `lib/`, 8–10k in `test/`. Phases 0–5 are a 2–4 weekend project; 6–9 roughly double it. This is a marathon repo, not a sprint — phase discipline is what keeps it shippable.
+
+## Current state — v1 SHIPPED (August 2026)
+
+Phases 0–5 are **complete and verified**: 141 tests green on Node 20.20.2 and 22.20.0; `tsc --noEmit`, tsup build and prettier clean; zero `dependencies`. Bench (2 consistent runs, hello-world JSON): **zonix 133,862 rps · Express 26,307 (5.1×) · Fastify 149,133 (zonix at ~90%)**. A no-middleware fast path was added mid-build to get from 65% → 90% of Fastify.
+
+Three findings from the build are now **binding spec amendments** (see "Post-v1 amendments" below). Do not "fix" the code back toward the pre-amendment text.
+
+**As-built layout is the compact v1 tree** (`lib/index.ts`, `request.ts`, `response.ts`, `router.ts`, `errors.ts`, `middleware/`). That is correct for now — the full tree below is the Phase 6 migration target, not a defect.
+
+**Next up: Phase 5.5 (performance program), then Phase 6.**
 
 ## Hard constraints (never violate)
 
@@ -20,47 +32,164 @@ Working name `zonix` (from Zonixtec). Rename is a find-replace; verify npm avail
 5. **Express-compatible middleware signature:** `(req, res, next)` where `next(err)` routes to the error handler. Many Express npm middlewares should work unmodified.
 6. **Every feature lands with tests in the same commit.** No untested code merges to `main`.
 
-## Repository layout
+## Repository layout (full scope — authoritative)
+
+> **Reality check:** v1 shipped on the compact layout and stays there through Phase 5.5. Migration to this tree is the first task of Phase 6 — a pure **restructure commit** (file moves + import updates only, zero behavior change, full suite green before and after, no other changes mixed in).
+
+Phase tags mark when each part comes alive; grow into this tree, do not scaffold it empty on day one. Approximate LOC targets are sanity checks, not quotas. **Where other sections of this doc name a file path in shorthand (e.g. `test/router.test.ts`, `lib/internal/mimeTypes.ts`), this tree is authoritative.**
 
 ```
 zonix/
-├── CLAUDE.md              # this file
-├── HANDOFF.md             # session state (phase, done, next, blockers)
-├── package.json
-├── tsconfig.json
-├── lib/
-│   ├── index.ts           # Zonix class, createServer wiring, all exports
-│   ├── request.ts         # ZonixRequest extends http.IncomingMessage
-│   ├── response.ts        # ZonixResponse extends http.ServerResponse
-│   ├── router.ts          # radix tree, one tree per HTTP method
-│   ├── errors.ts          # frameworkError(), ErrorCode enum, isClientDisconnect()
-│   ├── types.ts           # public types: Middleware, Handler, Next, ZonixOptions
-│   ├── internal/
-│   │   └── mimeTypes.ts   # extension → MIME map (~30 common types)
+├── CLAUDE.md                          # project context (source of truth)
+├── HANDOFF.md                         # session state
+├── README.md                          # [P9] quick start, compat table, bench table
+├── SECURITY.md                        # [P9] disclosure contact, threat model summary
+├── CHANGELOG.md                       # [P9] semver history
+├── LICENSE                            # MIT
+├── package.json                       # zero deps; files:["dist"], exports map
+├── tsconfig.json                      # strict, ESM, NodeNext
+├── .prettierrc
+├── .gitignore
+│
+├── .github/
+│   ├── workflows/
+│   │   ├── ci.yml                     # [P9] Node 20/22/24 matrix · build · test · 90% cov gate
+│   │   ├── bench.yml                  # [P9] autocannon regression (informational)
+│   │   └── release.yml                # [P9] tag → build → npm publish --provenance
+│   └── ISSUE_TEMPLATE/
+│       ├── bug_report.md
+│       └── feature_request.md
+│
+├── lib/                               # ~5.2k LOC at full scope
+│   ├── index.ts                       # [P1] barrel — ONLY file anything external imports
+│   ├── app.ts                         # [P1] Zonix class: createServer wiring, listen/close    ~250
+│   ├── request.ts                     # [P1] ZonixRequest core: body, params, lazy query       ~150
+│   ├── response.ts                    # [P1] ZonixResponse core: status/json/sendFile/redirect ~250
+│   ├── types.ts                       # [P1] public types: Middleware, Handler, Options
+│   │
+│   ├── internal/                      # engine room — never exported
+│   │   ├── run-chain.ts               # [P1] recursive middleware runner, next(err), dbl-next  ~120
+│   │   ├── dispatch-error.ts          # [P1] central error dispatch, headersSent, double-fault ~100
+│   │   └── constants.ts               # [P1] frozen EMPTY, shared symbols                       ~30
+│   │
+│   ├── router/
+│   │   ├── index.ts                   # [P2→P8] Router class, mountable, 4-arity err mw       ~180
+│   │   ├── radix.ts                   # [P2] tree: static>param>wildcard, backtracking        ~280
+│   │   ├── normalize.ts               # [P2] decode segments, trailing slash, method case      ~80
+│   │   └── mount.ts                   # [P8] prefix strip, url rewrite, originalUrl/baseUrl   ~120
+│   │
+│   ├── errors/
+│   │   ├── index.ts                   # [P1] frameworkError(), ErrorCode enum                  ~70
+│   │   └── disconnect.ts              # [P3] isClientDisconnect: ECONNRESET/EPIPE/PREMATURE    ~50
+│   │
+│   ├── compat/                        # Express surface (decision #10) — depends on core, never vice versa
+│   │   ├── request.ts                 # [P6] get/path/ip/protocol/hostname/xhr/is/accepts/fresh/range ~350
+│   │   └── response.ts                # [P6] send/set/append/type/sendStatus/cookie/locals/vary/format/download ~550
+│   │
+│   ├── negotiation/                   # in-house negotiator (decision #11) — linear parsers only
+│   │   ├── index.ts                   # [P7] q-value sort, specificity, tie-break             ~150
+│   │   ├── media-type.ts              # [P7] Accept                                           ~100
+│   │   ├── encoding.ts                # [P7] Accept-Encoding (identity;q=0 rules)              ~70
+│   │   ├── language.ts                # [P7] Accept-Language                                   ~70
+│   │   └── charset.ts                 # [P7] Accept-Charset                                    ~60
+│   │
+│   ├── http/                          # protocol utilities (inlined 3rd-party equivalents)
+│   │   ├── etag.ts                    # [P7] weak ETag, sha1-base64                            ~60
+│   │   ├── fresh.ts                   # [P7] If-None-Match / If-Modified-Since → 304           ~80
+│   │   ├── range.ts                   # [P7] single-range parse → 206 math                     ~90
+│   │   ├── content-disposition.ts     # [P6] RFC 5987 filename* encoding                       ~90
+│   │   ├── proxy.ts                   # [P6] trust proxy: CIDR match, presets, ip/ips         ~180
+│   │   └── mime.ts                    # [P3] curated ~120-type map + lookup                   ~100
+│   │
+│   ├── cookies/
+│   │   ├── parse.ts                   # [P4] header → object, handles '=' in values            ~60
+│   │   ├── serialize.ts               # [P6] attrs: httpOnly/secure/sameSite/maxAge/domain     ~80
+│   │   └── sign.ts                    # [P6] HMAC-SHA256, s: prefix, timing-safe compare       ~60
+│   │
+│   ├── query/
+│   │   ├── simple.ts                  # [P1] URLSearchParams flat (default)                    ~40
+│   │   └── extended.ts                # [P8] qs-style: depth≤5, key caps, __proto__ dropped,
+│   │                                  #      null-prototype objects                           ~300
+│   │
+│   ├── body/
+│   │   ├── read.ts                    # [P4] shared byte-limited stream reader → 400/413      ~100
+│   │   ├── json.ts                    # [P4] content-type gate, empty→{}                       ~80
+│   │   ├── urlencoded.ts              # [P8] simple + extended (reuses query/)                 ~90
+│   │   ├── raw.ts                     # [P8]                                                   ~50
+│   │   └── text.ts                    # [P8] charset-aware                                     ~60
+│   │
 │   └── middleware/
-│       ├── parseJSON.ts
-│       ├── serveStatic.ts
-│       ├── cookieParser.ts
-│       └── cors.ts
-├── test/                  # one file per feature area, node:test + supertest
-│   ├── helpers.ts         # makeApp(), listen-on-ephemeral-port helper
-│   ├── router.test.ts
-│   ├── middleware.test.ts
-│   ├── response.test.ts
-│   ├── errors.test.ts
-│   ├── parseJSON.test.ts
-│   ├── serveStatic.test.ts
-│   ├── cookieParser.test.ts
-│   ├── cors.test.ts
-│   └── disconnect.test.ts
+│       ├── serve-static.ts            # [P4→P7] traversal guard, index.html, miss→next(),
+│       │                              #         gains 304/206 in P7                          ~220
+│       ├── cors.ts                    # [P4] origin str/array/fn, preflight 204               ~130
+│       └── compression.ts             # [P7] gzip/brotli, threshold, Vary, skip-no-benefit    ~220
+│
+├── test/                              # ~8–10k LOC; mirrors lib/ one-to-one
+│   ├── helpers/
+│   │   ├── make-app.ts                # ephemeral port, auto-close registry
+│   │   ├── raw-client.ts              # net.Socket wire client — 304/206/slowloris need raw bytes
+│   │   └── tripwire.ts                # unhandledRejection → fail run; imported by EVERY file
+│   ├── core/
+│   │   ├── router.test.ts             # [P2] priority, backtracking, encoding, dup-throw
+│   │   ├── middleware.test.ts         # [P1] order, next(err), double-next inert
+│   │   ├── response.test.ts           # [P1/P3] json/status/redirect/sendFile
+│   │   ├── errors.test.ts             # [P3] headersSent race, handleErr-throws double fault
+│   │   └── disconnect.test.ts         # [P3] abort mid-stream, process survives
+│   ├── compat/
+│   │   ├── request.test.ts            # [P6]
+│   │   ├── response-send.test.ts      # [P6] Express send inference matrix
+│   │   ├── cookies-signed.test.ts     # [P6] wire-compat with cookie-signature format
+│   │   ├── router-mount.test.ts       # [P8] nesting, baseUrl, url rewrite
+│   │   ├── error-4arity.test.ts       # [P8] runs before handleErr
+│   │   └── express-port.test.ts       # [P8] real Express example, import-line-only port
+│   ├── http/
+│   │   ├── etag-fresh.test.ts         # [P7] 304 matrix
+│   │   ├── range.test.ts              # [P7] 206 boundaries, malformed → 200
+│   │   ├── negotiation.test.ts        # [P7] q-values, ties, identity;q=0
+│   │   └── proxy.test.ts              # [P6] CIDR, spoofed XFF with trust off
+│   ├── body/
+│   │   ├── json.test.ts               # [P4] byte-exact 413 boundary
+│   │   ├── urlencoded.test.ts         # [P8]
+│   │   └── raw-text.test.ts           # [P8]
+│   ├── middleware/
+│   │   ├── serve-static.test.ts       # [P4]
+│   │   ├── cors.test.ts               # [P4]
+│   │   └── compression.test.ts        # [P7]
+│   ├── security/                      # the "production-level" proof
+│   │   ├── prototype-pollution.test.ts# query/body/cookies → ({}).polluted === undefined
+│   │   ├── path-traversal.test.ts     # encoded, double-encoded, backslash variants
+│   │   ├── crlf-injection.test.ts     # redirect/location/set with \r\n payloads
+│   │   ├── limits-dos.test.ts         # oversized headers/body behavior
+│   │   └── slowloris.test.ts          # headersTimeout/requestTimeout posture (raw-client)
+│   └── fuzz/                          # zero-dep, seeded, deterministic
+│       ├── rng.ts                     # mulberry32, seed printed on failure for replay
+│       ├── query.fuzz.ts              # 10k inputs: defined outcome only, O(n) time cap
+│       ├── cookies.fuzz.ts
+│       ├── accept.fuzz.ts
+│       ├── range.fuzz.ts
+│       └── body.fuzz.ts
+│
 ├── bench/
-│   ├── zonix.js           # hello-world JSON server
-│   ├── express.js         # same route in Express
-│   ├── fastify.js         # same route in Fastify
-│   └── run.sh             # autocannon runner, prints comparison table
-└── examples/
-    └── basic.ts           # end-to-end usage demo, kept working at all times
+│   ├── servers/
+│   │   ├── zonix.js                   # identical hello-world JSON route in each
+│   │   ├── express.js
+│   │   └── fastify.js
+│   ├── run.sh                         # autocannon -c100 -p10 -d10, prints table
+│   └── results.md                     # committed history per version
+│
+└── examples/                          # every example runs in CI — living docs
+    ├── basic.ts                       # [P1] kept green from day one
+    ├── rest-api.ts                    # [P6] params, body, cookies, errors
+    ├── static-site.ts                 # [P7] static + compression + caching
+    └── express-migration.ts           # [P8] before/after port demo
 ```
+
+### Structure rules (enforced, not suggestions)
+
+1. **Import direction is law.** `internal/` and `errors/` import nothing from siblings. Core (`app.ts`, `request.ts`, `response.ts`, `router/`) imports only those. Feature dirs (`compat/`, `negotiation/`, `http/`, `cookies/`, `query/`, `body/`, `middleware/`) import core and each other's **exported entry points only** — never deep paths, never the reverse direction. `lib/index.ts` is the only barrel. Any circular import is a build failure (enforce with a CI lint step).
+2. **One directory = one inlined package.** `negotiation/` ↔ negotiator, `http/proxy.ts` ↔ proxy-addr, `query/extended.ts` ↔ qs, `cookies/sign.ts` ↔ cookie-signature, `http/etag.ts` + `http/fresh.ts` ↔ etag + fresh. When behavior is in doubt, diff against the original package's test suite — that is the compat oracle.
+3. **test/ mirrors lib/ one-to-one**, plus `security/` and `fuzz/` which mirror nothing — they exist to prove the hardening checklist.
+4. **Every new file has exactly one legal home.** If you cannot name the directory in one sentence, stop and fix the boundary — do not create a junk drawer. **A `utils/` folder is banned in this repo.**
 
 ## Locked design decisions
 
@@ -75,6 +204,26 @@ Do not relitigate these mid-build. If one proves wrong, stop, note it in HANDOFF
 7. **`res.sendFile(path, mime?)`:** `fs.stat` first (ENOENT → framework 404-coded error, not-a-file → error), infer MIME from extension via `mimeTypes.ts` (unknown extension without explicit `mime` arg → throw with actionable message), set `Content-Type` + `Content-Length`, then `await pipeline(createReadStream(path), res)` from `node:stream/promises` for backpressure and error propagation.
 8. **404 default:** `res.status(404).json({ error: "Cannot GET /x" })` unless an `app.fallback(handler)` is registered (only one allowed; second registration throws).
 9. **Errors are typed.** `frameworkError(message, fn, code)` produces an `Error` with a `code` from `ErrorCode` enum and `Error.captureStackTrace(err, fn)` so stacks start at user call sites.
+
+10. **Express sugar is core, not a shim.** All compat methods (Phases 6–8) are defined directly on `ZonixRequest`/`ZonixResponse` — same subclass mechanism, no runtime patching, no optional plugin. The framework IS Express-surface-compatible by default.
+11. **Every third-party capability is inlined with a locked security posture:**
+    - **Query parser:** default flat (`URLSearchParams`). `zonix({ queryParser: "extended" })` enables an in-house qs-style nested parser — hard limits (depth ≤ 5, ≤ 1000 keys, sparse-array guard at index > 20), `__proto__`/`constructor`/`prototype` keys silently dropped, results built on null-prototype objects. Same parser backs `urlencoded({ extended: true })`.
+    - **Content negotiation:** in-house negotiator for Accept / Accept-Encoding / Accept-Language / Accept-Charset. q-value sorting, specificity rules, **linear parsing only — regexes with nested quantifiers are banned repo-wide (ReDoS)**.
+    - **trust proxy:** proxy-addr equivalent (CIDR matching, `loopback`/`linklocal`/`uniquelocal` presets) feeding `req.ip/ips/protocol/hostname`. Default **off**.
+    - **ETag + freshness:** weak ETag (sha1-base64 of body, Express-style) + `fresh` logic (If-None-Match / If-Modified-Since → 304).
+    - **Cookies:** in-house serializer/parser + HMAC-SHA256 signing via `node:crypto`, `s:` prefix wire-compatible with `cookie-signature`.
+    - **Body parsers matching Express core:** `json`, `urlencoded`, `raw`, `text` — all byte-counted limits (413), charset-aware, content-type gated. **Multipart is out of scope until v2** (busboy-class streaming parser, separate project).
+    - **MIME:** curated ~120-entry map (not mime-db). Backs `res.type`, `req.is`, `send` inference, static serving. Unknown → `application/octet-stream`.
+    - Ban list: no `eval`/`new Function`, no dependency creep "just for one thing", every parser that touches user input ships with a fuzz test.
+12. **Router + mounting.** `zonix.Router()` instances mountable via `app.use("/api", router)` and nestable. Mounting rewrites `req.url` (prefix stripped) and preserves `req.originalUrl` + `req.baseUrl`. Express 4-arity `(err, req, res, next)` error middleware is accepted and runs before `handleErr`; `handleErr` remains the final safety net.
+13. **`res.send` semantics locked to Express:** string → `text/html` unless `res.type` set; Buffer → `application/octet-stream`; object/array → delegates to `json`; sets ETag when enabled; honors existing Content-Type; `res.send(status)` legacy number form **throws** with a pointer to `sendStatus`.
+14. **Conditional GET + ranges** in `send`/`sendFile`/`serveStatic`: 304 on fresh, single-range → 206 + Content-Range + Accept-Ranges, multipart ranges ignored (serve 200 full body — documented).
+
+### Post-v1 amendments (binding — these override the original decision text above)
+
+- **A1 → decision 5 (error dispatch when headers sent):** when `res.headersSent`, the socket is destroyed **and `handleErr` is still invoked** — the original "destroy instead of calling handleErr" reading contradicted the disconnect test's expectations. Consequence: every `handleErr` implementation must guard with `res.headersSent` before writing; the default 500 path already does.
+- **A2 → decision 6 (disconnect detection):** probing real aborts showed mid-`sendFile` yields `ERR_STREAM_PREMATURE_CLOSE` (covered) but an aborted write yields `ERR_STREAM_DESTROYED` (was not). The code list now includes `ERR_STREAM_DESTROYED`, and dispatch additionally tags `clientDisconnect: true` whenever the peer is verifiably gone (socket destroyed / `writableEnded` on a dead connection), independent of the error code.
+- **A3 → handler typing:** `Handler`/`Middleware` return `unknown`, not `void | Promise<void>` — the idiomatic `(req, res) => res.status(204).end()` must typecheck. Return values are ignored by the runner.
 
 ## Public API surface (target)
 
@@ -122,9 +271,44 @@ Work strictly in order. A phase is done only when its tests pass, `examples/basi
 
 **Phase 5 — Bench + polish.** bench/ scripts, autocannon `-c 100 -p 10 -d 10` on hello-world JSON. Record results table in README. Then README with quick start (<5 min to first success), API reference, and a short "how it works" architecture section.
 
-## Non-goals for v1 (do not build, even if tempting)
+**Phase 5.5 — Performance program (run BEFORE Phase 6 — compat work only adds weight; win the speed first and gate it).**
 
-HTTP/2, WebSockets, Range/206 responses, ETag/caching, compression, clustering, template engine, auth/session helpers, request logging, TypeBox-style schema validation. List them in README as roadmap; keep them out of lib/.
+_Step 1 — instrumentation before optimization._ Expand the bench matrix to five scenarios: hello-world JSON, param route (`/users/:id`), 10-middleware chain, 404 path, `sendFile` 1KB and 1MB. Methodology locked: 1 warmup run + 3 measured, report the median; same Node binary; machine + Node version recorded in `bench/results.md`; nothing else running. Add an `npm run profile` task (`node --cpu-prof` on the bench server; open in speedscope — `0x` as a devDep is also fine). **Flamegraph before guessing, every time.**
+
+_Step 2 — hypothesis queue, strict order._ Each item: verify the current behavior first (curl -v / flamegraph), implement, re-bench, record the delta in `results.md`. **A change that wins < 1% on its target scenario gets reverted — complexity has a budget.**
+
+1. **`Content-Length` on `res.json`** — verify with `curl -v` whether responses are currently chunked; if so, `Buffer.byteLength` + explicit Content-Length removes chunked-encoding overhead per response. Typical 3–6% on small JSON.
+2. **O(1) static-route map in front of the radix walk** — exact `METHOD:path` Map hit before touching the tree (find-my-way does this). Most routes in real apps are static.
+3. **Precomposed per-route pipeline** — flatten global + route middleware into one cached array per route (build lazily on first hit; invalidate the cache if `use()` is called after routes start serving). Removes per-request array/closure assembly.
+4. **Method keys stored uppercase** — `req.method` arrives uppercase; drop the per-request `toLowerCase()`.
+5. **Zero-alloc URL walk** — no `split("/")` array per request; descend the radix tree with `indexOf`-driven segment slicing; keep the shared frozen `EMPTY` params for zero-param matches.
+6. **Sync completion path** — only enter async machinery when the handler returns a thenable; a handler that finishes synchronously should cost no microtask.
+7. **Serializer decision — the single biggest remaining Fastify edge** (`fast-json-stringify`-class schema serialization). Two options, Swapnil decides and the choice gets recorded here before any code:
+   - **Option A (default, keeps the codegen ban):** closure-composed serializers from an optional per-route response schema. Expect ~1.3–1.8× over `JSON.stringify`.
+   - **Option B (requires an explicit, narrow ban exception):** code-generated serializers fenced in one file, generated **only** from developer-supplied schemas (never request data), schemas sanitized onto null-prototype objects first. Expect 2–5× on stringify. This is how Fastify/ajv do it, but it is a real relaxation of decision 11's ban — it does not happen silently.
+8. **GC audit** — `--trace-gc` during the hello-world bench; the fast path should show no allocation-driven sawtooth.
+
+_Exit:_ ≥ 95% of Fastify on hello-world (stretch: parity), **no scenario regressed**, `results.md` has a per-optimization delta table, and fast-path equivalence tests (see Performance rules) are green.
+
+**Phase 6 — Express req/res surface (decision #10, #13).** Opens with the **restructure commit** (compact layout → full tree, pure moves, suite green before/after) — no compat code lands until that is merged. `req`: `get/header`, `path`, `originalUrl`, `baseUrl`, `ip`/`ips` (trust proxy), `protocol`/`secure`, `hostname`/`subdomains`, `xhr`, `is()`, `accepts()` family, `fresh`/`stale`, `range()`. `res`: `send`, `set/get/append`, `type`, `sendStatus`, `cookie/clearCookie` (incl. signed), `locals`, `vary`, `format`, `links`, `location`, `redirect("back")`, `download()`, proper `content-disposition` filename encoding. **Exit test:** `test/compat/req.test.ts` + `res.test.ts` green, and a handler copy-pasted from the Express docs runs unmodified.
+
+**Phase 7 — Negotiation, caching, compression (decision #11, #14).** In-house negotiator wired into `accepts`/`format`/static serving; ETag + fresh → 304s across `send`/`sendFile`/`serveStatic`; single-range 206; `compression()` middleware (gzip/brotli via `node:zlib`, threshold, Accept-Encoding negotiation, `Vary: Accept-Encoding`, skip-if-no-benefit). **Exit test:** wire-level assertions for 304, 206, and correct Content-Encoding under each Accept-Encoding permutation.
+
+**Phase 8 — Router, mounting, remaining parsers (decision #11, #12).** `Router` class, path-mounted `use`, nested mounts, url rewrite + `originalUrl`/`baseUrl`, 4-arity error middleware, `urlencoded`/`raw`/`text` parsers, extended query parser with its pollution + fuzz suites. **Exit test:** a small real Express example app (routes, two mounted routers, error middleware) ported by changing only the import line.
+
+**Phase 9 — npm publish pipeline.** Decide name (`zonix-http` / `zonixjs` / `@zonixtec/zonix` — see naming note). package.json: `exports` map with `types`, `files: ["dist"]`, `sideEffects: false`, `engines.node: ">=20"`, repository/keywords/MIT. tsup build (esm + dts + sourcemaps). GitHub Actions CI: test matrix Node 20/22/24, build, coverage gate. Publish **with provenance** from CI on version tags (`npm publish --provenance --access public`). Semver discipline: stay `0.x` while the API can move; **v1.0.0 only after the dogfood gate** (below). README gets: install, quick start, Express-compat table (what works / differs), bench table, SECURITY.md with a disclosure contact.
+
+## Performance rules (permanent — apply to every phase from here on)
+
+1. **Pay for what you use.** Compat sugar (Phase 6+) must be lazy: accessor-based, computed on first touch. A request that never reads `req.hostname` or `req.accepts()` pays zero for their existence. No per-request precomputation of convenience fields, ever.
+2. **Regression gate:** hello-world median may not drop more than **2% per phase**. Bench numbers go into HANDOFF.md at every phase close; a phase is not done while the gate is broken.
+3. **Fast paths are guarded, not trusted.** The no-middleware fast path (and any future one) must (a) route errors through the same central dispatch — no duplicated dispatch logic — and (b) ship with an **equivalence test**: the same route exercised via fast path and via slow path (forced with a no-op middleware) must produce byte-identical wire output. This is the guard against the classic fast-path drift bug.
+4. **ETag defaults off** at the app level (`etag: false`) — a deliberate deviation from Express, because default-on means hashing every response body. Documented in the README compat table; opt-in per app or per route.
+5. **No optimization without a number.** Before/after medians in `bench/results.md` or it didn't happen; sub-1% wins on the target scenario get reverted.
+
+## Non-goals (all versions — do not build, even if tempting)
+
+HTTP/2, WebSockets, multipart/file uploads (busboy-class problem — v2 candidate), clustering, template engine, auth/session helpers, request logging, schema validation, JSONP, `app.param()`, regex route paths. (Ranges, ETag/caching and compression are **not** non-goals anymore — they're scheduled in Phase 7. During Phases 0–5 they stay out.) List the rest in README as roadmap; keep them out of lib/.
 
 ## Test plan
 
@@ -144,9 +328,23 @@ Minimum coverage per area:
 
 Skip testing: stock `http.Server` behavior, trivial getters.
 
+## Production-hardening checklist (what "production-level" means in this repo)
+
+Production-grade is a set of properties, not a line count. All of these are enforced, not aspirational:
+
+- **Fuzzing:** every user-input parser (query extended, cookies, accept-*, range, JSON limits, urlencoded) has a seeded-RNG fuzz loop in `test/fuzz/` (hand-rolled, zero-dep) — 10k random inputs per parser must produce only defined outcomes (parse result or 4xx), never a throw that escapes, never > O(n) time blowup.
+- **Security suite** (`test/security/`): prototype pollution attempts through query/body/cookies (assert `({}).polluted === undefined` after), path traversal batteries against serveStatic, CRLF injection attempts in `redirect`/`location`/`set`, oversized header and body behavior, and slowloris posture — server ships with `headersTimeout`/`requestTimeout` defaults documented and tested.
+- **Zero unhandled rejections:** every test file installs a `process.on("unhandledRejection")` tripwire in setup that fails the run.
+- **CI gates:** Node 20/22/24 matrix, coverage ≥ 90% lines on `lib/`, bench job (informational, catches order-of-magnitude regressions).
+- **Dogfood gate for v1.0.0:** the framework must run one real internal Zonixtec service (or a personal production app) for ~a month of real traffic with no framework-caused incident before the 1.0 tag. Until then it's 0.x and the README says so honestly.
+
 ## Definition of done (v1)
 
-All phases green, `npm test` exits 0 on Node 20 and 22, bench table shows ≥ Express throughput and within ~15% of Fastify on the hello-world route, `examples/basic.ts` runs, README complete, zero `dependencies` in package.json.
+**✅ MET (August 2026).** 141 tests on Node 20.20.2 + 22.20.2, clean typecheck/build/format, zero runtime deps, 5.1× Express and ~90% of Fastify on hello-world (target was ≥85%), example smoke-tested over curl. v1 is frozen; further speed work happens under Phase 5.5 with its own exit bar.
+
+## Definition of done (v2 — full compat + npm)
+
+Phases 6–9 green, hardening checklist fully enforced in CI, the Express example-app port test passes, compat table in README is accurate (verified against real Express behavior, not assumed), package published as 0.x with provenance, and the dogfood gate is the only thing standing between the repo and v1.0.0.
 
 ## Session workflow
 

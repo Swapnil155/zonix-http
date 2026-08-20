@@ -134,6 +134,50 @@ describe("middleware chain", () => {
     assert.equal(handlerRan, false);
   });
 
+  test("middleware registered after the first request still runs", async () => {
+    // The per-route pipeline is cached; registering later must invalidate it.
+    const seen: string[] = [];
+    const app = makeApp();
+    app.get("/x", (_req, res) => res.json({ seen: [...seen] }));
+
+    await request(app.server).get("/x").expect(200, { seen: [] });
+
+    app.use((_req, _res, next) => {
+      seen.push("late");
+      next();
+    });
+
+    await request(app.server)
+      .get("/x")
+      .expect(200, { seen: ["late"] });
+    await request(app.server)
+      .get("/x")
+      .expect(200, { seen: ["late", "late"] });
+  });
+
+  test("a fallback registered after the first 404 still replaces the default", async () => {
+    const app = makeApp();
+    app.get("/known", (_req, res) => res.json({ ok: true }));
+
+    await request(app.server).get("/missing").expect(404, { error: "Cannot GET /missing" });
+
+    app.fallback((_req, res) => res.status(404).json({ custom: true }));
+
+    await request(app.server).get("/missing").expect(404, { custom: true });
+  });
+
+  test("a route registered after the first request is reachable", async () => {
+    const app = makeApp();
+    app.get("/first", (_req, res) => res.json({ ok: true }));
+
+    await request(app.server).get("/first").expect(200);
+    await request(app.server).get("/second").expect(404);
+
+    app.get("/second", (_req, res) => res.json({ second: true }));
+
+    await request(app.server).get("/second").expect(200, { second: true });
+  });
+
   test("app.use() rejects non-functions", () => {
     const app = makeApp();
     assert.throws(() => app.use(undefined as unknown as Middleware), /expects functions/);
