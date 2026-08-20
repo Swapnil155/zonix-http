@@ -13,6 +13,9 @@ import autocannon from "autocannon";
 import { spawn } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { ensureFixtures } from "./fixtures.mjs";
+import { ECHO_BODY_JSON, scaleProbePaths } from "./servers/shared.mjs";
+import { formatRegime, measureRegime, reportRegime, measureCpu, reportCpu } from "./regime.mjs";
 
 const SCENARIOS = [
   // hello keeps -d 10 so its number stays comparable with the v1 README table.
@@ -73,12 +76,43 @@ const SCENARIOS = [
     warmup: 2,
     expect: 200,
   },
+  // W2: routing at a realistic table size. A 2-route bench hides routing
+  // entirely; 200 routes is where a radix walk and a linear scan diverge.
+  // Requests cycle across ten positions in the table, so the number is not an
+  // artefact of where in the table the probe happens to sit.
+  {
+    id: "routes-200-param",
+    requests: scaleProbePaths(200, 10).map((path) => ({ path })),
+    path: "/api/v1/res0/12345",
+    connections: 100,
+    pipelining: 10,
+    duration: 5,
+    warmup: 2,
+    expect: 200,
+    env: { BENCH_ROUTES: "200" },
+  },
+  // W2: the other realistic shape - read a JSON body, echo it back.
+  {
+    id: "post-json-echo",
+    path: "/echo",
+    method: "POST",
+    body: ECHO_BODY_JSON,
+    headers: { "content-type": "application/json" },
+    connections: 100,
+    pipelining: 10,
+    duration: 5,
+    warmup: 2,
+    expect: 200,
+  },
 ];
 
 const FRAMEWORKS = [
   { id: "zonix", script: "bench/servers/zonix.js", port: 3001 },
   { id: "express", script: "bench/servers/express.js", port: 3002 },
   { id: "fastify", script: "bench/servers/fastify.js", port: 3003 },
+  // Opt in with --only=...,fastify-schema : Fastify with response schemas, so
+  // fast-json-stringify is active. The plain variant declares none.
+  { id: "fastify-schema", script: "bench/servers/fastify-schema.js", port: 3004 },
 ];
 
 const args = new Map(
@@ -93,18 +127,35 @@ const wanted = args.get("scenarios")?.split(",");
 const runs = Number(args.get("runs") ?? 3);
 const quick = args.has("quick");
 
-const frameworks = FRAMEWORKS.filter((f) => !only || only.includes(f.id));
+// fastify-schema is opt-in: it is a second Fastify configuration, not a fourth
+// framework, and including it by default would double-count Fastify.
+const frameworks = FRAMEWORKS.filter((f) =>
+  only ? only.includes(f.id) : f.id !== "fastify-schema",
+);
 const scenarios = SCENARIOS.filter((s) => !wanted || wanted.includes(s.id)).map((s) =>
   quick ? { ...s, duration: 2, warmup: 1 } : s,
 );
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 
-function startServer(framework) {
+// Rule 7: any file scenario in this run has to be stamped, so measure first.
+const cpu = await measureCpu();
+reportCpu(cpu);
+
+const usesFiles = scenarios.some((s) => s.id.startsWith("file-"));
+let regime;
+if (usesFiles) {
+  const { SMALL } = ensureFixtures();
+  regime = measureRegime(SMALL);
+  reportRegime(regime);
+  console.log("");
+}
+
+function startServer(framework, scenario) {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [framework.script], {
       cwd: root,
-      env: { ...process.env, PORT: String(framework.port) },
+      env: { ...process.env, PORT: String(framework.port), ...(scenario?.env ?? {}) },
       stdio: ["ignore", "ignore", "inherit", "ipc"],
     });
     const timer = setTimeout(
@@ -138,13 +189,19 @@ function stopServer(child) {
 }
 
 async function hit(url, scenario, duration) {
-  const result = await autocannon({
+  const options = {
     url,
     connections: scenario.connections,
     pipelining: scenario.pipelining,
     duration,
-  });
-  return result;
+  };
+  if (scenario.method !== undefined) options.method = scenario.method;
+  if (scenario.body !== undefined) options.body = scenario.body;
+  if (scenario.headers !== undefined) options.headers = scenario.headers;
+  // Cycling several paths keeps a router benchmark from measuring one lucky
+  // position in the table.
+  if (scenario.requests !== undefined) options.requests = scenario.requests;
+  return autocannon(options);
 }
 
 const median = (values) => {
@@ -158,7 +215,7 @@ const results = {};
 for (const framework of frameworks) {
   results[framework.id] = {};
   for (const scenario of scenarios) {
-    const child = await startServer(framework);
+    const child = await startServer(framework, scenario);
     const url = `http://127.0.0.1:${framework.port}${scenario.path}`;
     try {
       process.stdout.write(`${framework.id}/${scenario.id}: warmup`);
@@ -234,6 +291,15 @@ const noisy = Object.entries(results).flatMap(([fw, byScenario]) =>
 if (noisy.length > 0) {
   console.log("");
   console.log(`Spread still > 5% after ${Math.max(runs, 5)} samples: ${noisy.join(", ")}`);
+}
+
+console.log("");
+if (regime !== undefined) {
+  console.log("");
+  console.log(formatRegime(regime));
+  if (regime.degraded) {
+    console.log("File rows above are DEGRADED-REGIME: not comparable across frameworks.");
+  }
 }
 
 console.log("");

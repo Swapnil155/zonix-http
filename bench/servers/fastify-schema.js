@@ -7,11 +7,34 @@ const { SMALL, LARGE } = ensureFixtures();
 
 const app = Fastify({ logger: false });
 
-// No response schemas: fast-json-stringify is NOT active in this variant.
-const helloSchema = {};
-const idSchema = {};
-const okSchema = {};
-const echoSchema = {};
+// Response schemas activate fast-json-stringify, which is Fastify's real
+// serialization ceiling. The plain variant declares none, so this pair isolates
+// exactly what schema compilation is worth.
+const helloSchema = {
+  schema: { response: { 200: { type: "object", properties: { hello: { type: "string" } } } } },
+};
+const idSchema = {
+  schema: { response: { 200: { type: "object", properties: { id: { type: "string" } } } } },
+};
+const okSchema = {
+  schema: { response: { 200: { type: "object", properties: { ok: { type: "boolean" } } } } },
+};
+const echoSchema = {
+  schema: {
+    response: {
+      200: {
+        type: "object",
+        properties: {
+          id: { type: "integer" },
+          name: { type: "string" },
+          email: { type: "string" },
+          active: { type: "boolean" },
+          tags: { type: "array", items: { type: "string" } },
+        },
+      },
+    },
+  },
+};
 
 app.get("/", helloSchema, async () => ({ hello: "world" }));
 
@@ -41,7 +64,7 @@ for (const route of scaleRoutes()) {
   app.get(route.pattern, idSchema, async (req) => ({ id: req.params.id }));
 }
 
-await app.listen({ port: Number(process.env.PORT ?? 3003), host: "127.0.0.1" });
+await app.listen({ port: Number(process.env.PORT ?? 3004), host: "127.0.0.1" });
 process.send?.("ready");
 process.on("message", (m) => {
   if (m === "shutdown") process.exit(0);

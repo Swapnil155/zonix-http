@@ -12,14 +12,36 @@ import autocannon from "autocannon";
 import { spawn } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { ensureFixtures } from "./fixtures.mjs";
+import { ECHO_BODY_JSON, scaleProbePaths } from "./servers/shared.mjs";
+import { formatRegime, measureRegime, reportRegime, measureCpu, reportCpu } from "./regime.mjs";
 
 const SCENARIOS = {
   "file-1kb": { path: "/file/small", connections: 100, pipelining: 10, duration: 5 },
   "file-1mb": { path: "/file/large", connections: 50, pipelining: 1, duration: 5 },
   hello: { path: "/", connections: 100, pipelining: 10, duration: 5 },
+  param: { path: "/users/42", connections: 100, pipelining: 10, duration: 5 },
+  chain: { path: "/chain", connections: 100, pipelining: 10, duration: 5 },
+  "routes-200-param": {
+    requests: scaleProbePaths(200, 10).map((path) => ({ path })),
+    path: "/api/v1/res0/12345",
+    connections: 100,
+    pipelining: 10,
+    duration: 5,
+    env: { BENCH_ROUTES: "200" },
+  },
+  "post-json-echo": {
+    path: "/echo",
+    method: "POST",
+    body: ECHO_BODY_JSON,
+    headers: { "content-type": "application/json" },
+    connections: 100,
+    pipelining: 10,
+    duration: 5,
+  },
 };
 
-const FRAMEWORKS = ["zonix", "express", "fastify"];
+const ALL_FRAMEWORKS = ["zonix", "express", "fastify", "fastify-schema"];
 
 const args = new Map(
   process.argv.slice(2).map((a) => {
@@ -29,18 +51,40 @@ const args = new Map(
 );
 
 const names = (args.get("scenarios") ?? "file-1kb").split(",");
+// fastify-schema is a second Fastify configuration, not a fourth framework, so
+// it is opt-in rather than default.
+const FRAMEWORKS = (args.get("frameworks") ?? "zonix,express,fastify").split(",");
+for (const f of FRAMEWORKS) {
+  if (!ALL_FRAMEWORKS.includes(f)) {
+    console.error(`Unknown framework ${f}`);
+    process.exit(1);
+  }
+}
 const rounds = Number(args.get("rounds") ?? 5);
 const settleMs = Number(args.get("settle") ?? 750);
 const root = fileURLToPath(new URL("..", import.meta.url));
 
+const cpu = await measureCpu();
+reportCpu(cpu);
+console.log("");
+
+// Rule 7 preflight before any file scenario.
+let regime;
+if (names.some((n) => n.startsWith("file-"))) {
+  const { SMALL } = ensureFixtures();
+  regime = measureRegime(SMALL);
+  reportRegime(regime);
+  console.log("");
+}
+
 let nextPort = 3400;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-function start(framework, port) {
+function start(framework, port, scenario) {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [`bench/servers/${framework}.js`], {
       cwd: root,
-      env: { ...process.env, PORT: String(port) },
+      env: { ...process.env, PORT: String(port), ...(scenario?.env ?? {}) },
       stdio: ["ignore", "ignore", "inherit", "ipc"],
     });
     const timer = setTimeout(() => reject(new Error(`${framework} never signalled ready`)), 20000);
@@ -66,11 +110,16 @@ const stop = (child) =>
 
 async function measure(framework, scenario) {
   const port = nextPort++;
-  const child = await start(framework, port);
+  const child = await start(framework, port, scenario);
   try {
     const url = `http://127.0.0.1:${port}${scenario.path}`;
-    await autocannon({ url, ...scenario, duration: 2 });
-    const r = await autocannon({ url, ...scenario, duration: scenario.duration });
+    const options = { url, connections: scenario.connections, pipelining: scenario.pipelining };
+    if (scenario.method !== undefined) options.method = scenario.method;
+    if (scenario.body !== undefined) options.body = scenario.body;
+    if (scenario.headers !== undefined) options.headers = scenario.headers;
+    if (scenario.requests !== undefined) options.requests = scenario.requests;
+    await autocannon({ ...options, duration: 2 });
+    const r = await autocannon({ ...options, duration: scenario.duration });
     const stats = r.statusCodeStats ?? {};
     const total = Object.values(stats).reduce((s, v) => s + (v.count ?? 0), 0);
     const ok = stats["200"]?.count ?? 0;
@@ -131,11 +180,18 @@ for (const name of names) {
         `${spread.toFixed(1)}% | ${xs.map(fmt).join(", ")} |`,
     );
   }
+  if (name.startsWith("file-") && regime?.degraded) {
+    console.log(
+      "**DEGRADED-REGIME** — these file numbers describe the filter driver, not the frameworks.",
+    );
+    console.log("");
+  }
   const z = median(samples.zonix);
   console.log("");
   console.log(
-    `zonix vs express ${(z / median(samples.express)).toFixed(2)}x · ` +
-      `vs fastify ${(z / median(samples.fastify)).toFixed(2)}x`,
+    FRAMEWORKS.filter((f) => f !== "zonix")
+      .map((f) => `zonix vs ${f} ${(z / median(samples[f])).toFixed(2)}x`)
+      .join(" · "),
   );
   console.log("");
 }

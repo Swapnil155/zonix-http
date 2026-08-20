@@ -408,3 +408,121 @@ ceiling and the difference is invisible.**
   in the slow regime and the numbers describe the filter driver.
 - file-1mb remains **permanently low-confidence** (>5% spread at 5 samples in every
   session); no claims are built on it.
+
+---
+
+# Session 4 — regime preflight, the schema question, and the first W2 numbers
+
+## Rule 7 implemented, plus a second preflight it exposed
+
+`bench/regime.mjs` is now imported by `run.mjs`, `interleave.mjs` and `ab.mjs`.
+
+**Filesystem preflight (rule 7).** Before any file scenario the harness measures
+`open`+`read`+`close` on the real bench fixture and stamps the run. It also
+measures reads through an already-open descriptor, because the _ratio_ is what
+distinguishes a filter driver from a merely slow disk — a slow disk makes both
+slow, an interceptor only makes `open` slow. Current reading on this machine:
+
+```
+regime: DEGRADED-REGIME — 3,489 opens/sec (threshold 50,000),
+        602,297 reads/sec on an open fd (173x)
+```
+
+So file scenarios remain unadjudicable until the AV exclusion lands.
+
+**CPU preflight (added this session, same rationale).** The first attempt at the
+new scenarios ran through the sequential matrix and reported **zonix/hello at
+80,787 rps** — against 145,779 measured an hour earlier — with Express down 40%
+and Fastify, benchmarked _last_, untouched at 151k. Rule 6 says treat that as a
+defect first, and it was one: background agent processes were competing for CPU
+during the early part of the run, and a framework-by-framework matrix charges
+that to whoever benches during it. The re-run below, interleaved and on a quiet
+machine, put hello back at 142,963.
+
+The harness now samples system-wide CPU utilization from `os.cpus()` tick
+counters before every run and stamps `BUSY-MACHINE` above 20%. A timed spin loop
+was tried first and rejected: on a 24-core machine one spinning thread takes an
+idle core and reports 97% of normal while the rest of the machine is saturated.
+Verified against a deliberate 4-core load (reads 21.4%, stamps BUSY).
+
+## The Fastify schema question — settled
+
+**`bench/servers/fastify.js` declared no response schema**, confirming the
+session-2 suspicion: `fast-json-stringify` has never been active in any matrix
+this project has recorded. `bench/servers/fastify-schema.js` now exists, with
+response schemas on every JSON route, and both variants are measured below.
+
+**The answer changes the W3 plan: schema compilation is worth ~1% here, not the
+gap.** Fastify-with-schema is within noise of Fastify-without on every scenario
+(hello 148,544 vs 147,904; routes-200 97,760 vs 96,480; echo 62,890 vs 62,787).
+So the earlier hypothesis — that our 95–99% was "us without schema vs them with"
+— is false in both directions. Payloads this small do not give a compiled
+serializer room to matter, and **D5's route-level `serialized()` wiring should be
+expected to buy ~1%, not a category change.** Worth building for the API, not as
+a performance play.
+
+## First numbers: routes-200-param and post-json-echo
+
+Interleaved (`bench/interleave.mjs`), rotating order, 5 rounds, one server
+process alive at a time, quiet machine. Cross-framework claims come from this
+harness only — never the sequential matrix.
+
+| Scenario         |   zonix | express | fastify | fastify-schema | zonix vs fastify | vs express |
+| ---------------- | ------: | ------: | ------: | -------------: | ---------------: | ---------: |
+| hello            | 142,963 |  26,024 | 147,904 |        148,544 |        **0.97×** |      5.49× |
+| routes-200-param | 135,309 |  22,360 |  96,480 |         97,760 |        **1.40×** |      6.05× |
+| post-json-echo   |  62,134 |  16,633 |  62,787 |         62,890 |        **0.99×** |      3.74× |
+
+Spreads: 1.2–4.5% everywhere except express/hello (6.1%). Per-round samples are
+in the raw output; on routes-200-param the two distributions do not overlap at
+all — zonix 132,499–136,614 against fastify 94,355–98,080, five rounds out of
+five.
+
+### W2: the router-at-scale win is real
+
+**zonix is 1.40× Fastify and 6.05× Express on a 200-route param-heavy table.**
+This is the first decisive cross-framework win the project has that survives its
+own rules: above the noise floor, interleaved, non-overlapping distributions,
+on a quiet machine, with the status of every response asserted.
+
+The mechanism is visible in how each framework degrades from a 6-route table to
+a 200-route one:
+
+|         | 6 routes (hello) | 200 routes |     change |
+| ------- | ---------------: | ---------: | ---------: |
+| zonix   |          142,963 |    135,309 |  **−5.4%** |
+| fastify |          147,904 |     96,480 | **−34.8%** |
+| express |           26,024 |     22,360 |     −14.1% |
+
+zonix's radix walk is nearly flat against table size; Fastify loses a third of
+its throughput. That is exactly the property the zero-alloc walk and the
+segment-keyed tree were built for, and exactly what a 2-route benchmark hides.
+**Caveat honestly stated: the cause of Fastify's degradation has not been
+profiled** — this records what was measured, not why Fastify behaves that way.
+A flamegraph of their router is the next step before any published claim.
+
+The probe deliberately cycles ten paths spread across the table
+(`res0`, `res20`, … `res180`). A linear-scan router costs more the later a route
+sits, so benchmarking a single position flatters one design or the other;
+cycling measures what a real application sees.
+
+### W3: parity, and the gap is not serialization
+
+hello 0.97× and post-json-echo 0.99× are statistical parity — inside the ~5%
+noise floor, and now with the schema question closed, not attributable to
+serialization on either side.
+
+## Scenario definitions added
+
+- **routes-200-param** — 200 routes of the form `/api/v1/res{i}/:id`, registered
+  only when `BENCH_ROUTES=200`, which the runner sets for this scenario alone so
+  the small-table scenarios keep the route table their recorded history was
+  measured with. Requests cycle ten positions across the table.
+- **post-json-echo** — `POST /echo` with a 5-field JSON body, parsed and echoed.
+  Body parsing is **route-level** in zonix and Express (`parseJSON()` /
+  `express.json()` on the route, never `app.use`): a global parser would take
+  every other route off the no-middleware fast path and silently change hello,
+  param and chain. Fastify parses JSON itself, so there is nothing to scope.
+
+All four servers were verified to return byte-identical responses on the new
+endpoints before any measurement was taken.

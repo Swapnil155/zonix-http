@@ -13,6 +13,8 @@ import autocannon from "autocannon";
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { ensureFixtures } from "./fixtures.mjs";
+import { measureRegime, reportRegime } from "./regime.mjs";
 
 const SCENARIOS = {
   hello: { path: "/", connections: 100, pipelining: 10, duration: 5 },
@@ -73,6 +75,16 @@ const stop = (child) =>
 
 // A fresh port for every measurement: rebinding a just-closed port on Windows
 // can land on a socket still in TIME_WAIT and skew the run.
+// Rule 7 preflight. A paired A/B survives a degraded regime better than a
+// cross-framework run does, but the stamp still has to appear on the record.
+let regime;
+if (names.some((n) => n.startsWith("file-"))) {
+  const { SMALL } = ensureFixtures();
+  regime = measureRegime(SMALL);
+  reportRegime(regime);
+  console.log("");
+}
+
 let nextPort = 3100;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
