@@ -30,6 +30,29 @@ export const ErrorCode = {
 
 export type ErrorCodeValue = (typeof ErrorCode)[keyof typeof ErrorCode];
 
+/**
+ * Errors already handed to the central dispatcher. Used to keep an error that a
+ * handler both awaited and leaked (e.g. an ignored `sendFile` promise) from being
+ * reported twice. A WeakSet keeps the tag off the error object itself.
+ */
+const dispatched = new WeakSet<object>();
+
+/** Record that this error has reached the central dispatcher. */
+export function markDispatched(err: unknown): void {
+  if (err !== null && (typeof err === "object" || typeof err === "function")) {
+    dispatched.add(err as object);
+  }
+}
+
+/** True when this error has already been dispatched once. */
+export function wasDispatched(err: unknown): boolean {
+  return (
+    err !== null &&
+    (typeof err === "object" || typeof err === "function") &&
+    dispatched.has(err as object)
+  );
+}
+
 /** Socket-level codes that mean "the client left", not "we broke". */
 const DISCONNECT_CODES = new Set(["ECONNRESET", "EPIPE", "ERR_STREAM_PREMATURE_CLOSE"]);
 

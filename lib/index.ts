@@ -1,6 +1,6 @@
 import http from "node:http";
 import type { AddressInfo, ListenOptions } from "node:net";
-import { ErrorCode, frameworkError, isClientDisconnect, toError } from "./errors.js";
+import { ErrorCode, frameworkError, isClientDisconnect, markDispatched, toError } from "./errors.js";
 import { ZonixRequest } from "./request.js";
 import { ZonixResponse } from "./response.js";
 import { Router } from "./router.js";
@@ -96,6 +96,11 @@ export class Zonix {
     this.server = http.createServer(
       { IncomingMessage: ZonixRequest, ServerResponse: ZonixResponse },
       (req, res) => {
+        // Errors raised outside the chain (an ignored sendFile promise, a socket
+        // failure mid-stream) still land in the one dispatcher.
+        ZonixResponse.attachErrorSink(res, (err: unknown) => {
+          void this.#dispatchError(err, req, res);
+        });
         this.#handle(req, res).catch((err: unknown) => {
           // #handle is written not to reject; this only fires if zonix itself broke.
           console.error("zonix: internal failure while handling a request", err);
@@ -254,8 +259,15 @@ export class Zonix {
    * here is logged and swallowed rather than escaping as an unhandled rejection.
    */
   async #dispatchError(thrown: unknown, req: ZonixRequest, res: ZonixResponse): Promise<void> {
+    markDispatched(thrown);
     const err = toError(thrown);
-    if (isClientDisconnect(err)) err.clientDisconnect = true;
+    markDispatched(err);
+    // Decision 6 plus one extension: an aborted write surfaces as
+    // ERR_STREAM_DESTROYED rather than one of the socket codes, so a request
+    // whose peer has verifiably gone counts as a disconnect regardless of code.
+    if (isClientDisconnect(err) || (req.destroyed && !res.writableFinished)) {
+      err.clientDisconnect = true;
+    }
 
     // Past the point of a clean response: kill the socket, then still let the app
     // observe the error for logging, with any write attempt swallowed.

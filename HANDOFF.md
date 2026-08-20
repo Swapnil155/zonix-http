@@ -1,6 +1,6 @@
 # HANDOFF
 
-**Phase:** 3 — Response + resilience (starting)
+**Phase:** 4 — Batteries (starting)
 
 ## Done
 - Phase 0: scaffold — package.json (ESM, zero deps, engines >=20), tsconfig strict + `noUncheckedIndexedAccess`, prettier, git init.
@@ -11,7 +11,9 @@
 - Phase 2: radix router — segment-keyed tree per method, params, tail wildcard, static > param > wildcard with
   backtracking, trailing-slash + repeated-slash normalization, per-segment decode (malformed -> 400), duplicate and
   bad-pattern detection, `fallback()`. Exact-path `Map` fast path for fully static routes.
-- 62 tests green (`router`, `middleware`, `errors`, `response`). `examples/basic.ts` runs; params verified over curl.
+- Phase 3: `res.sendFile()` (stat -> MIME table -> `pipeline()`), `res.attachment()` with header-injection guards,
+  `lib/internal/mimeTypes.ts` (~33 types), disconnect tagging, headersSent guards on every send path.
+- 81 tests green (`router`, `middleware`, `errors`, `response`, `sendFile`, `disconnect`).
 
 ## Deviations from CLAUDE.md (accepted, note if wrong)
 - Handler/Middleware return type is `unknown`, not `void | Promise<void>`: the union breaks TS's void-return
@@ -24,10 +26,17 @@
 - Router extras beyond the spec: `/files/*` also matches `/files` (captures `""`), repeated slashes collapse, and
   duplicate param names in one pattern throw. HEAD does **not** fall back to GET routes (keeps method isolation
   as specified) — listed as roadmap instead.
+- Disconnect tagging extends decision 6: an aborted write surfaces as `ERR_STREAM_DESTROYED`, which is not in the
+  code list, so dispatch also tags `clientDisconnect` when `req.destroyed && !res.writableFinished`. Verified
+  against real aborts (mid-sendFile gives `ERR_STREAM_PREMATURE_CLOSE`, mid-write gives `ERR_STREAM_DESTROYED`).
+- `res.sendFile()` returns a promise and self-attaches a rejection handler: an un-awaited failure is routed to
+  `handleErr` through a response error sink instead of becoming an unhandled rejection. A WeakSet dedupes so an
+  awaited failure dispatches exactly once.
 
 ## Next
-Phase 3: `res.sendFile()` (stat → MIME from `lib/internal/mimeTypes.ts` → `pipeline()`), `res.attachment()`,
-client-disconnect handling per decision 6, and `test/disconnect.test.ts` with an `unhandledRejection` trap.
+Phase 4 batteries, in order: `parseJSON` (content-type gate, byte-counted limit -> 413, malformed -> 400,
+empty -> `{}`), `serveStatic(root)` (resolve + `startsWith(root + sep)` -> 403, dir -> index.html, miss -> `next()`),
+`cookieParser` (unsigned), `cors`. One test file each.
 
 ## Blockers / open questions
 None.
