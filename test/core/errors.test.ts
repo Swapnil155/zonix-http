@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import request from "supertest";
-import { makeApp } from "./helpers.js";
+import { makeApp } from "../helpers/make-app.js";
 
 describe("error dispatch", () => {
   test("a synchronous throw in a handler reaches handleErr", async () => {

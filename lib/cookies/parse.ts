@@ -1,4 +1,5 @@
-import { EMPTY, type Middleware, type StringMap } from "../types.js";
+import { EMPTY } from "../internal/constants.js";
+import type { Middleware, StringMap } from "../types.js";
 
 /**
  * Parse the `Cookie` header into `req.cookies`.

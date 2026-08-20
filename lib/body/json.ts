@@ -1,4 +1,4 @@
-import { ErrorCode, frameworkError } from "../errors.js";
+import { ErrorCode, frameworkError } from "../errors/index.js";
 import type { Middleware } from "../types.js";
 
 export interface ParseJSONOptions {

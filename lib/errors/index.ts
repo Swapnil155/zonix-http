@@ -1,4 +1,16 @@
-import type { ZonixError } from "./types.js";
+import { isClientDisconnect } from "./disconnect.js";
+
+/** Every error reaching a handler is normalized to an `Error` carrying these optional tags. */
+export interface ZonixError extends Error {
+  /** Stable machine-readable code, present on all framework-raised errors. */
+  code?: string;
+  /** Suggested HTTP status. The default error responder honours it. */
+  status?: number;
+  /** True when the peer went away mid-response; safe to skip logging. */
+  clientDisconnect?: boolean;
+}
+
+export { isClientDisconnect } from "./disconnect.js";
 
 /** Stable error codes. Framework-raised errors always carry one of these on `err.code`. */
 export const ErrorCode = {
@@ -53,15 +65,6 @@ export function wasDispatched(err: unknown): boolean {
   );
 }
 
-/** Socket-level codes that mean "the client left", not "we broke". */
-const DISCONNECT_CODES = new Set([
-  "ECONNRESET",
-  "EPIPE",
-  "ERR_STREAM_PREMATURE_CLOSE",
-  // Amendment A2: an aborted write surfaces as this rather than a socket code.
-  "ERR_STREAM_DESTROYED",
-]);
-
 /**
  * Build a tagged framework error. `fn` is the public function to cut the stack at,
  * so traces start at the user's call site instead of inside zonix.
@@ -77,14 +80,6 @@ export function frameworkError(
   if (status !== undefined) err.status = status;
   Error.captureStackTrace(err, fn);
   return err;
-}
-
-/** True when the error is the peer hanging up rather than a server fault. */
-export function isClientDisconnect(err: unknown): boolean {
-  if (err === null || typeof err !== "object") return false;
-  const code = (err as { code?: unknown }).code;
-  if (typeof code === "string" && DISCONNECT_CODES.has(code)) return true;
-  return (err as ZonixError).clientDisconnect === true;
 }
 
 /** Coerce anything thrown (strings, objects, undefined) into a real Error, tagging disconnects. */

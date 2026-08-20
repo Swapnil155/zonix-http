@@ -1,7 +1,7 @@
 import { stat } from "node:fs/promises";
 import path from "node:path";
-import { ErrorCode, frameworkError } from "../errors.js";
-import { DEFAULT_MIME, lookupMime } from "../internal/mimeTypes.js";
+import { ErrorCode, frameworkError } from "../errors/index.js";
+import { DEFAULT_MIME, lookupMime } from "../http/mime.js";
 import type { Middleware } from "../types.js";
 
 export interface ServeStaticOptions {

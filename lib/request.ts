@@ -1,5 +1,7 @@
 import { IncomingMessage } from "node:http";
-import { EMPTY, type StringMap } from "./types.js";
+import { EMPTY } from "./internal/constants.js";
+import { parseQuery } from "./query/simple.js";
+import type { StringMap } from "./types.js";
 
 /**
  * The request object handed to every middleware and handler.
@@ -30,19 +32,7 @@ export class ZonixRequest extends IncomingMessage {
    */
   get query(): StringMap {
     if (this.#query !== undefined) return this.#query;
-    const url = this.url ?? "";
-    const q = url.indexOf("?");
-    if (q === -1 || q === url.length - 1) return (this.#query = EMPTY);
-
-    // Null-prototype (like Express's query parser) so a "__proto__" or
-    // "constructor" key is inert data rather than a pollution vector.
-    const out: StringMap = Object.create(null) as StringMap;
-    let found = false;
-    for (const [key, value] of new URLSearchParams(url.slice(q + 1))) {
-      out[key] = value;
-      found = true;
-    }
-    return (this.#query = found ? out : EMPTY);
+    return (this.#query = parseQuery(this.url ?? ""));
   }
 
   /** Request path with the query string removed. Not percent-decoded. */

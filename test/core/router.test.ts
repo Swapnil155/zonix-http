@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import request from "supertest";
-import type { Handler } from "../lib/index.js";
-import { makeApp } from "./helpers.js";
+import type { Handler } from "../../lib/index.js";
+import { makeApp } from "../helpers/make-app.js";
 
 /** Echo the matched route id plus whatever params were captured. */
 const echo =

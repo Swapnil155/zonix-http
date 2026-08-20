@@ -9,10 +9,10 @@ import assert from "node:assert/strict";
 import net from "node:net";
 import { fileURLToPath } from "node:url";
 import { describe, test } from "node:test";
-import zonix, { type Zonix } from "../lib/index.js";
-import { start } from "./helpers.js";
+import zonix, { type Zonix } from "../../lib/index.js";
+import { start } from "../helpers/make-app.js";
 
-const fixture = fileURLToPath(new URL("./fixtures/hello.txt", import.meta.url));
+const fixture = fileURLToPath(new URL("../fixtures/hello.txt", import.meta.url));
 
 /** Register the identical route table on an app. */
 function defineRoutes(app: Zonix): void {

@@ -1,4 +1,4 @@
-import { ErrorCode, frameworkError } from "./errors.js";
+import { ErrorCode, frameworkError } from "../errors/index.js";
 
 /**
  * Schema-driven JSON serialization (CLAUDE.md decision D1, Option A).

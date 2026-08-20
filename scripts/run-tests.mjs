@@ -1,28 +1,31 @@
 // Enumerate the test files ourselves and hand them to node --test.
 //
 // Node 22 accepts a glob, Node 20 does not, and npm scripts run through cmd.exe
-// on Windows where the shell will not expand one either. Listing the files here
+// on Windows where the shell will not expand one either. Walking the tree here
 // keeps `npm test` identical on both supported versions, with no dependency.
 import { spawnSync } from "node:child_process";
 import { readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
-const files = [
-  ...readdirSync(root + "test/")
-    .filter((name) => name.endsWith(".test.ts"))
-    .sort()
-    .map((name) => `test/${name}`),
-  // Fuzz suites live in their own directory and are named *.fuzz.ts, but they
-  // are ordinary node:test files and run as part of the suite.
-  ...readdirSync(root + "test/fuzz/")
-    .filter((name) => name.endsWith(".fuzz.ts"))
-    .sort()
-    .map((name) => `test/fuzz/${name}`),
-];
 
+/** Every *.test.ts and *.fuzz.ts under test/, at any depth. */
+function collect(dir) {
+  const found = [];
+  for (const entry of readdirSync(root + dir, { withFileTypes: true })) {
+    if (entry.isDirectory()) {
+      if (entry.name === "fixtures") continue;
+      found.push(...collect(`${dir}/${entry.name}`));
+    } else if (entry.name.endsWith(".test.ts") || entry.name.endsWith(".fuzz.ts")) {
+      found.push(`${dir}/${entry.name}`);
+    }
+  }
+  return found;
+}
+
+const files = collect("test").sort();
 if (files.length === 0) {
-  console.error("No test files found in test/");
+  console.error("No test files found under test/");
   process.exit(1);
 }
 

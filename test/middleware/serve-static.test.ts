@@ -3,11 +3,11 @@ import net from "node:net";
 import { fileURLToPath } from "node:url";
 import { describe, test } from "node:test";
 import request from "supertest";
-import { ErrorCode, serveStatic, type ZonixError } from "../lib/index.js";
-import { makeApp, start } from "./helpers.js";
+import { ErrorCode, serveStatic, type ZonixError } from "../../lib/index.js";
+import { makeApp, start } from "../helpers/make-app.js";
 
-const siteRoot = fileURLToPath(new URL("./fixtures/site", import.meta.url));
-const fixturesRoot = fileURLToPath(new URL("./fixtures", import.meta.url));
+const siteRoot = fileURLToPath(new URL("../fixtures/site", import.meta.url));
+const fixturesRoot = fileURLToPath(new URL("../fixtures", import.meta.url));
 
 /** Send a raw request line so the client cannot normalize `..` away for us. */
 function rawGet(url: string, target: string): Promise<string> {

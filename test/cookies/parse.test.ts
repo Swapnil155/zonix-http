@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import request from "supertest";
-import { cookieParser } from "../lib/index.js";
-import { makeApp } from "./helpers.js";
+import { cookieParser } from "../../lib/index.js";
+import { makeApp } from "../helpers/make-app.js";
 
 function cookieApp() {
   const app = makeApp();

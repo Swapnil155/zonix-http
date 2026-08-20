@@ -1,8 +1,8 @@
 import { createReadStream, readFile as readFileCb, stat as statCb, type Stats } from "node:fs";
 import { ServerResponse } from "node:http";
 import { pipeline } from "node:stream/promises";
-import { ErrorCode, frameworkError, wasDispatched } from "./errors.js";
-import { DEFAULT_MIME, lookupMime } from "./internal/mimeTypes.js";
+import { ErrorCode, frameworkError, wasDispatched } from "./errors/index.js";
+import { DEFAULT_MIME, lookupMime } from "./http/mime.js";
 import type { ZonixRequest } from "./request.js";
 
 /** Where an error raised outside the middleware chain is sent. Wired by `Zonix`. */

@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import request from "supertest";
-import { ErrorCode, parseJSON, type ZonixError } from "../lib/index.js";
-import { makeApp } from "./helpers.js";
+import { ErrorCode, parseJSON, type ZonixError } from "../../lib/index.js";
+import { makeApp } from "../helpers/make-app.js";
 
 /** App that echoes whatever ended up on req.body, plus its type. */
 function echoApp(limit?: string | number) {

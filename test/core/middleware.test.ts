@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import request from "supertest";
-import type { Middleware } from "../lib/index.js";
-import { makeApp } from "./helpers.js";
+import type { Middleware } from "../../lib/index.js";
+import { makeApp } from "../helpers/make-app.js";
 
 describe("middleware chain", () => {
   test("global middleware runs in registration order, before the handler", async () => {

@@ -1,10 +1,11 @@
+import type { ZonixError } from "./errors/index.js";
 import type { ZonixRequest } from "./request.js";
 import type { ZonixResponse } from "./response.js";
 
-/** Frozen, shared empty map — every request that has no params/cookies points at this one object. */
-export const EMPTY: StringMap = Object.freeze(Object.create(null)) as StringMap;
-
 export type StringMap = Record<string, string>;
+
+export { EMPTY } from "./internal/constants.js";
+export type { ZonixError } from "./errors/index.js";
 
 /**
  * Advance the chain. `next()` continues, `next(err)` short-circuits to the error
@@ -32,16 +33,6 @@ export type ErrorHandler = (
   req: ZonixRequest,
   res: ZonixResponse,
 ) => HandlerResult;
-
-/** Every error reaching a handler is normalized to an `Error` carrying these optional tags. */
-export interface ZonixError extends Error {
-  /** Stable machine-readable code, present on all framework-raised errors. */
-  code?: string;
-  /** Suggested HTTP status. The default error responder honours it. */
-  status?: number;
-  /** True when the peer went away mid-response; safe to skip logging. */
-  clientDisconnect?: boolean;
-}
 
 export type HttpMethod = "get" | "post" | "put" | "patch" | "delete" | "head" | "options";
 

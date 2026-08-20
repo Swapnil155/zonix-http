@@ -1,5 +1,5 @@
 import type { AddressInfo } from "node:net";
-import zonix, { type Zonix, type ZonixError, type ZonixOptions } from "../lib/index.js";
+import zonix, { type Zonix, type ZonixError, type ZonixOptions } from "../../lib/index.js";
 
 /**
  * Create an app for a test. Warnings are off by default so intentional misuse
@@ -43,24 +43,4 @@ export function captureErrors(app: Zonix): ZonixError[] {
     if (!res.headersSent) res.status(500).json({ error: "handled", code: err.code ?? null });
   });
   return seen;
-}
-
-/** Fail the test run if any promise rejection escapes the framework. */
-export function trapUnhandledRejections(): { reasons: unknown[]; restore: () => void } {
-  const reasons: unknown[] = [];
-  const existing = process.listeners("unhandledRejection");
-  for (const listener of existing) process.off("unhandledRejection", listener);
-
-  const onRejection = (reason: unknown): void => {
-    reasons.push(reason);
-  };
-  process.on("unhandledRejection", onRejection);
-
-  return {
-    reasons,
-    restore: () => {
-      process.off("unhandledRejection", onRejection);
-      for (const listener of existing) process.on("unhandledRejection", listener);
-    },
-  };
 }

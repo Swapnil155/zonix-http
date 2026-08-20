@@ -6,8 +6,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, test } from "node:test";
 import request from "supertest";
-import type { ZonixError } from "../lib/index.js";
-import { makeApp, start, trapUnhandledRejections } from "./helpers.js";
+import type { ZonixError } from "../../lib/index.js";
+import { makeApp, start } from "../helpers/make-app.js";
+import { trapUnhandledRejections } from "../helpers/tripwire.js";
 
 /** Big enough that the stream cannot finish before the client hangs up. */
 let dir: string;

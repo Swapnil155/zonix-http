@@ -6,7 +6,7 @@
 // bench/micro.ts. Both serializers are checksummed so V8 cannot eliminate them,
 // and each payload is verified byte-identical to JSON.stringify before timing,
 // so a "win" can never come from producing different output.
-import { createSerializer, type Schema } from "../lib/serialize.js";
+import { createSerializer, type Schema } from "../lib/http/serialize.js";
 
 const args = new Map(
   process.argv.slice(2).map((a) => {

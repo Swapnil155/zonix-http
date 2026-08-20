@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import request from "supertest";
-import { cors, type CorsOptions } from "../lib/index.js";
-import { makeApp } from "./helpers.js";
+import { cors, type CorsOptions } from "../../lib/index.js";
+import { makeApp } from "../helpers/make-app.js";
 
 function corsApp(options?: CorsOptions) {
   const app = makeApp();

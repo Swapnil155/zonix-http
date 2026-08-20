@@ -11,7 +11,7 @@
 // folded into a checksum so V8 cannot eliminate the call being measured.
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { Router as CandidateRouter } from "../lib/router.js";
+import { Router as CandidateRouter } from "../lib/router/index.js";
 import type { Handler } from "../lib/types.js";
 
 const args = new Map(
@@ -25,12 +25,14 @@ const args = new Map(
 const impl = args.get("impl") ?? "candidate";
 let Router = CandidateRouter;
 if (impl === "baseline") {
-  const baselinePath = fileURLToPath(new URL("./.baseline-src/router.ts", import.meta.url));
+  const baselinePath = fileURLToPath(new URL("./.baseline-src/router/index.ts", import.meta.url));
   if (!existsSync(baselinePath)) {
     console.error("No baseline sources. Run: node bench/snapshot.mjs");
     process.exit(1);
   }
-  ({ Router } = (await import("./.baseline-src/router.js")) as { Router: typeof CandidateRouter });
+  ({ Router } = (await import("./.baseline-src/router/index.js")) as {
+    Router: typeof CandidateRouter;
+  });
 }
 
 const handler: Handler = () => undefined;

@@ -1,49 +1,51 @@
 # HANDOFF
 
-**Phase:** 5.5 — **complete except exit (a)**, which needs one decision from Swapnil. Next: Phase 6 (opens with the restructure commit).
+**Phase:** 6 — restructure commit merged. Next: the Express `req`/`res` compat surface.
 
-## Done this session (session 3)
+## Done this session
 
-- **File items (D4) — the biggest win of the program.** Flamegraph showed file-1kb was almost pure
-  stream/promise scaffolding (GC 20.3%, FastBuffer 13.9%, DOMException 11.1%).
-  - **F1 buffered send ≤ 32KB**: `readFile` + one `end()`. **+98.4% e2e**, every pair positive.
-  - **F2 callback `fs`** instead of `node:fs/promises`: `stat @ promises` 2.37% → 0.26%, GC 6.0% → 2.6%.
-  - **F3 highWaterMark 256KB: REVERTED** (−7.6%, every pair negative).
-  - **F4 `.pipe()` instead of `pipeline()`: NOT DONE** — ~2.4% ceiling on a 23.8%-idle path, against every
-    disconnect guarantee. Declined on the flamegraph; overrule if wanted.
-- **Serializer (D1): `createSerializer` shipped**, Option A, no codegen. Median **1.24×**, **3.52×** on small
-  objects, never materially slower. Arrays delegate to `JSON.stringify` after two hand-rolled attempts measured
-  0.75× and 0.54× — V8's array path is not beatable from JS without codegen.
-- **Header experiment (D3): kept.** Header self-time **3.90% → 1.79%**, `setHeader` gone from the profile.
-  A follow-on (send string, size with `byteLength`) measured worse and was reverted.
-- **Tests: 165 green** on Node 22.20.0 and 20.20.2 — including the new buffered-path disconnect test, six
-  threshold tests either side of 32KB, and a 10k-input seeded escaping fuzz suite (`test/fuzz/`, replay via `SEED=`).
-- **Bench harness** now asserts each scenario's status distribution (the 404 scenario passes only at 100% 404s)
-  and re-runs up to 5 samples when spread exceeds 5%.
+- **BI-1 closed.** The session-3 competitor file collapse was not a competitor problem: `open()` is rate limited
+  system-wide (3,400–3,900/sec, ~260µs each; reads on an already-open fd run at 673,664/sec, and `os.tmpdir` is
+  equally slow), so every framework is pinned at that ceiling. Interleaved, zonix measured 4,199 against express
+  4,252 and fastify 4,389 — **zonix collapsed too**, versus the 23,026 its own sequential matrix reported minutes
+  earlier. Cross-framework file claims are retired; the paired **+98.4%** survives. `bench/interleave.mjs` is now
+  the only sound cross-framework instrument here. Full write-up in `bench/results.md`.
+- **Phase 6 restructure commit**: compact tree → the authoritative full tree. Pure moves plus import updates,
+  nothing else. 165 tests green **before and after**, on Node 22.20.0 and 20.20.2, and the built public export
+  surface is byte-identical either side (verified by diffing `Object.keys` of the built module).
 
-## Exit criteria (revised)
+## Layout now
 
-(b) chain 97.0% of hello ✓ · (c) file-1kb 23,026 vs Express 4,270 ✓ · (d) serializer + microbench + fuzz ✓ ·
-(e) header experiment recorded ✓ · (f) no kept regression ✓ · (g) methodology documented ✓
+`lib/`: `index.ts` (barrel only) · `app.ts` · `request.ts` · `response.ts` · `types.ts` ·
+`internal/{constants,run-chain,dispatch-error}.ts` · `router/{index,radix,normalize}.ts` ·
+`errors/{index,disconnect}.ts` · `http/{mime,serialize}.ts` · `cookies/parse.ts` · `query/simple.ts` ·
+`body/json.ts` · `middleware/{serve-static,cors}.ts`.
 
-**(a) framework self-time ≤ 2.5% on hello: NOT MET at 3.1%** (medians 2.9 / 3.3 / 3.1).
+`test/` mirrors it: `core/` · `body/` · `cookies/` · `middleware/` · `fuzz/` · `helpers/{make-app,tripwire}.ts`.
 
-## The one open decision
+## Deviations from the tree (deliberate, small — worth a decision)
 
-V8 attributes the `JSON.stringify` builtin to its calling frame, so the response encode is counted inside our
-`json` frame (1.94% of the 3.1%). The framework's own dispatch machinery is **~1.16%**. Getting under 2.5%
-means making `res.json` faster, which D1 rules out (serializer stays opt-in); the one legal attempt at the
-remaining allocation measured worse and was reverted. **Either redefine (a) as "dispatch self-time excluding
-the response encode ≤ 1.5%" (currently ~1.16% ✓), or retire it.** Full reasoning in `bench/results.md`.
-
-## Standing measurement rules (now permanent)
-
-Noise floor ~5% e2e; **never compare rps across sessions** (Express's own file-1kb read 14,034 one session and
-4,270 the next). Use `bench/ab.mjs` paired deltas, `bench/micro-ab.mjs`, or profile self-time share. Trust an
-e2e verdict only when every paired run agrees in sign.
+- **`http/serialize.ts` has no slot in the authoritative tree** (it postdates it). Placed under `http/` as the
+  inlined equivalent of `fast-json-stringify`, matching structure rule 2. **Add it to the tree in CLAUDE.md.**
+- **`body/read.ts` was not split out**: the byte-limited reader is still inline in `body/json.ts`. It earns its
+  own file when `urlencoded`/`raw`/`text` arrive in Phase 8 and actually share it.
+- **`helpers/raw-client.ts` not created** — the tree tags it for the P7 304/206 tests, and scaffolding it empty
+  would violate "do not scaffold the tree empty". Two suites still carry small local raw clients; fold them into
+  the shared helper when P7 needs it.
+- `cookies/parse.ts` holds both `parseCookieHeader` and the `cookieParser()` middleware factory. The tree gives
+  the middleware no separate home.
 
 ## Next
 
-1. Settle exit (a), then Phase 5.5 closes.
-2. Item 8 (GC audit, `--trace-gc`) — still not started.
-3. Phase 6 opens with the restructure commit (compact tree → full tree, pure moves, suite green either side).
+1. Phase 6 compat surface: `req` (`get`/`header`, `originalUrl`, `baseUrl`, `ip`/`ips`, `protocol`, `hostname`,
+   `xhr`, `is()`, `accepts()` family, `fresh`/`stale`, `range()`), `res` (`send`, `set`/`get`/`append`, `type`,
+   `sendStatus`, `cookie`/`clearCookie`, `locals`, `vary`, `format`, `links`, `location`, `download`).
+   Performance rule 1 applies throughout: lazy, accessor-based, zero cost when untouched.
+2. Regression gate at phase close: same-session paired A/B, at least 5 pairs, no more than 2% off hello-world.
+3. Item 8 (GC audit) still not started.
+
+## Standing measurement rules
+
+Noise floor ~5% e2e; never compare rps across sessions. Before believing any file benchmark, run the `open()`
+probe — if open+read+close is in the thousands per second rather than the hundreds of thousands, the rig is in
+the slow regime and the numbers describe the filter driver, not the framework.
