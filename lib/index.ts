@@ -9,7 +9,7 @@ import {
 } from "./errors.js";
 import { ZonixRequest } from "./request.js";
 import { ZonixResponse } from "./response.js";
-import { Router } from "./router.js";
+import { Router, type RouteMatch } from "./router.js";
 import type {
   ErrorHandler,
   Handler,
@@ -107,10 +107,7 @@ export class Zonix {
         ZonixResponse.attachErrorSink(res, (err: unknown) => {
           void this.#dispatchError(err, req, res);
         });
-        this.#handle(req, res).catch((err: unknown) => {
-          // #handle is written not to reject; this only fires if zonix itself broke.
-          console.error("zonix: internal failure while handling a request", err);
-        });
+        this.#handle(req, res);
       },
     );
   }
@@ -234,9 +231,41 @@ export class Zonix {
     return this;
   }
 
-  async #handle(req: ZonixRequest, res: ZonixResponse): Promise<void> {
+  #handle(req: ZonixRequest, res: ZonixResponse): void {
+    let match;
     try {
-      const match = this.#router.find(req.method ?? "get", req.path);
+      match = this.#router.find(req.method ?? "get", req.path);
+    } catch (err) {
+      this.#fail(err, req, res);
+      return;
+    }
+
+    // Fast path: a matched route with nothing to run but its own handler. Skips
+    // the chain array, the chain promise and the per-step closures entirely.
+    if (match !== undefined && this.#globals.length === 0 && match.middleware.length === 0) {
+      req.params = match.params;
+      try {
+        const result = match.handler(req, res, (err) => {
+          // A lone handler calling next() has nowhere to advance to, but
+          // next(err) must still reach dispatch exactly as it would in a chain.
+          if (err !== undefined && err !== null) this.#fail(err, req, res);
+        });
+        if (isThenable(result)) result.then(undefined, (err: unknown) => this.#fail(err, req, res));
+      } catch (err) {
+        this.#fail(err, req, res);
+      }
+      return;
+    }
+
+    void this.#runChain(match, req, res);
+  }
+
+  async #runChain(
+    match: RouteMatch | undefined,
+    req: ZonixRequest,
+    res: ZonixResponse,
+  ): Promise<void> {
+    try {
       const chain: Middleware[] = [...this.#globals];
 
       if (match !== undefined) {
@@ -254,6 +283,14 @@ export class Zonix {
     } catch (err) {
       await this.#dispatchError(err, req, res);
     }
+  }
+
+  /** Hand an error to central dispatch from a non-async context. */
+  #fail(err: unknown, req: ZonixRequest, res: ZonixResponse): void {
+    this.#dispatchError(err, req, res).catch((internal: unknown) => {
+      // #dispatchError is written not to reject; this only fires if zonix broke.
+      console.error("zonix: internal failure while dispatching an error", internal);
+    });
   }
 
   #notFound(req: ZonixRequest, res: ZonixResponse): void {

@@ -21,7 +21,7 @@
   ],
   "scripts": {
     "build": "tsup lib/index.ts --format esm --dts --clean",
-    "test": "node --import tsx --test \"test/**/*.test.ts\"",
+    "test": "node scripts/run-tests.mjs",
     "typecheck": "tsc --noEmit",
     "bench": "bash bench/run.sh",
     "format": "prettier --write \"{lib,test,bench,examples}/**/*.{ts,js}\" \"*.{json,md}\"",
