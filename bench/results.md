@@ -297,3 +297,114 @@ redefine (a) as **framework dispatch self-time excluding the response encode
 - Exit (a): redefine or retire (above) — the one thing blocking a clean close.
 - F4 (`.pipe()` vs `pipeline()`): declined on flamegraph evidence; overrule if wanted.
 - Item 8 (GC audit, `--trace-gc`): still not started.
+
+---
+
+# BI-1 — bench-integrity investigation (CLOSED)
+
+Triggered by rule 6: session 3 recorded Express file-1kb at 4,270 (vs 14,034 the
+session before) and Fastify at 4,225 (vs 12,073), collapsing ~68% to within ~1%
+of each other while zonix doubled.
+
+**The anomaly was ours, not theirs.** The competitor readings were correct. The
+zonix reading in that same matrix was the one taken under different conditions.
+
+## 1. Harness diff vs the previous session's commit
+
+`git diff 40744a4 HEAD -- bench/` — `bench/servers/express.js`,
+`bench/servers/fastify.js` and `bench/fixtures.mjs` are **byte-identical**. The
+only harness change is `bench/run.mjs` (status assertions, spread-triggered
+reruns). No competitor code changed.
+
+## 2. Competitor serving paths verified at runtime
+
+| Framework | Path                                           | Evidence                                                                                                                  |
+| --------- | ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| Express   | `res.sendFile` → `send`                        | `Accept-Ranges: bytes`, `Cache-Control: public, max-age=0`, `Last-Modified`, weak `ETag` all present; 1024 bytes returned |
+| Fastify   | `createReadStream` + explicit `content-length` | `content-length: 1024`, 1024 bytes returned                                                                               |
+
+Both still serve through the same mechanism as the prior session, and both are
+healthy. Express is doing strictly more work per request (ETag, Last-Modified,
+range advertisement) — which explains a gap, but not a session-over-session
+collapse.
+
+## 3. Three-way interleaved rerun (`bench/interleave.mjs`, 5 rounds, rotating order)
+
+| file-1kb | median |   min |   max | spread |
+| -------- | -----: | ----: | ----: | -----: |
+| zonix    |  4,199 | 3,999 | 4,397 |   9.5% |
+| express  |  4,252 | 4,235 | 4,270 |   0.8% |
+| fastify  |  4,389 | 4,389 | 4,399 |   0.2% |
+
+**zonix collapsed too** — 4,199, against the 23,026 its own sequential matrix
+reported minutes earlier. Three very different implementations landing within
+4% of each other, at spreads as tight as 0.2%, is the signature of an external
+serializing limit rather than of framework code.
+
+Controls that rule out harness and machine-wide causes:
+
+- **Same sequential harness, zonix only, file-1kb, immediately after: 4,198 rps.**
+  The harness that produced 23,026 produced 4,198 unchanged. Not a harness defect.
+- **hello, interleaved, same period:** zonix 145,779 · express 26,600 · fastify
+  150,080 — matching the session-3 matrix (144,250 / 26,731 / 148,800). The
+  machine is not throttled; JSON throughput is untouched.
+
+## 4. Environmental cause: `open()` is rate-limited system-wide
+
+Measured outside any HTTP framework (`fsprobe`, 1KB file):
+
+| Operation                                            |             Rate |
+| ---------------------------------------------------- | ---------------: |
+| `open` + `read` + `close`, project `bench/.fixtures` |   **3,400 /sec** |
+| `open` + `read` + `close`, `os.tmpdir`               |   **3,900 /sec** |
+| `read` on an already-open fd, project                | **673,664 /sec** |
+| `read` on an already-open fd, tmpdir                 | **667,074 /sec** |
+
+Opening a 1KB file costs ~260–290µs; reading the same bytes through an open
+descriptor costs ~1.5µs. **The entire cost is in `open()`, it is ~170× the read
+cost, and it is not path-specific** — `os.tmpdir` is as slow as the project
+directory, so it is not a per-directory exclusion but a system-wide filesystem
+filter driver (antivirus real-time scanning) intercepting every open.
+
+Every framework opens the file once per request, so all of them are pinned at
+that ~3.4–3.9k opens/sec ceiling: 4,199 / 4,252 / 4,389 is the filter driver
+being measured, not zonix, Express or Fastify.
+
+## What this invalidates, and what survives
+
+**Invalidated — the sequential matrix's cross-framework file numbers.** In the
+session-3 matrix, zonix was measured first (fast regime, 23,026) and Express and
+Fastify later (slow regime, 4,270 / 4,225). The regime changed _during_ the run,
+and a framework-by-framework matrix charges that change to whoever was running.
+This is exactly the failure rule 6 anticipates. Retired claims:
+
+- ~~file-1kb 23,026 vs Express 4,270 (5.4×)~~ — comparing two different machine regimes.
+- ~~"above every Express reading ever recorded"~~ — true in the fast regime only; in the
+  current regime nothing exceeds ~4.4k, zonix included.
+- Exit (c), "file-1kb ≥ Express", **cannot be adjudicated on this rig**: the metric is
+  dominated by a per-open cost shared equally by all three frameworks.
+
+**Survives — the F1 improvement itself.** +98.4% was a _paired_ zonix-vs-zonix
+measurement, interleaved in one session, with all five pairs positive
+(+88.6%..+100.1%), and it is mechanistically explained by the flamegraph:
+buffered send removed GC 20.3% → 2.6%, FastBuffer 13.9% → 1.1% and DOMException
+11.1% → 0. What the paired run cannot claim is an absolute rps figure, because
+absolute file throughput on this machine depends on which regime it is in.
+Stated honestly: **buffered send roughly halves the per-request cost of serving
+a small file; on a rig whose `open()` is not filter-driver-bound that showed as
+11.5k → 22.9k rps, and on one that is, all frameworks are pinned near the open()
+ceiling and the difference is invisible.**
+
+## Standing rules added
+
+- **File scenarios are cross-framework-unusable on this rig.** Any file claim must be
+  paired zonix-vs-zonix, and must state that `open()` is the binding constraint.
+- **Cross-framework claims use `bench/interleave.mjs`, never the sequential matrix.**
+  The sequential matrix measures frameworks in blocks, so any drift lands on one
+  framework. Interleaving with rotating order is now the only sound cross-framework
+  instrument here.
+- Before any file benchmark is believed, run the `open()` probe: if `open+read+close`
+  is in the thousands per second rather than the hundreds of thousands, the rig is
+  in the slow regime and the numbers describe the filter driver.
+- file-1mb remains **permanently low-confidence** (>5% spread at 5 samples in every
+  session); no claims are built on it.

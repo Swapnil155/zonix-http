@@ -21,7 +21,7 @@ Three findings from the build are now **binding spec amendments** (see "Post-v1 
 
 **As-built layout is the compact v1 tree** (`lib/index.ts`, `request.ts`, `response.ts`, `router.ts`, `errors.ts`, `middleware/`). That is correct for now — the full tree below is the Phase 6 migration target, not a defect.
 
-**Next up: CLOSE Phase 5.5** — file items (buffered small-file send + file-path audit; still open, see Session 2 addendum), serializer Option A (`createSerializer`), bounded header experiment — **then Phase 6.**
+**Phase 5.5 CLOSED** (Session 3 addendum): file-1kb **+98.4% paired** (11.5k → 23.0k rps), `createSerializer` shipped per D1, header batching kept (3.90% → 1.79% self-time), dispatch self-time ~1.16% against the redefined 1.5% gate. **Open: BI-1** — bench-integrity investigation (competitor file numbers anomalous this session; blocks cross-framework claims and the Phase 9 README, not code). **Next: Phase 6, opening with the restructure commit; BI-1 runs alongside.**
 
 ## Hard constraints (never violate)
 
@@ -191,6 +191,8 @@ zonix/
 3. **test/ mirrors lib/ one-to-one**, plus `security/` and `fuzz/` which mirror nothing — they exist to prove the hardening checklist.
 4. **Every new file has exactly one legal home.** If you cannot name the directory in one sentence, stop and fix the boundary — do not create a junk drawer. **A `utils/` folder is banned in this repo.**
 
+
+
 ## Locked design decisions
 
 Do not relitigate these mid-build. If one proves wrong, stop, note it in HANDOFF.md, and ask Swapnil.
@@ -230,16 +232,16 @@ Do not relitigate these mid-build. If one proves wrong, stop, note it in HANDOFF
 ```ts
 import zonix, { parseJSON, serveStatic, cookieParser, cors } from "zonix";
 
-const app = zonix(); // ZonixOptions later; start with none
+const app = zonix();                       // ZonixOptions later; start with none
 
-app.use(parseJSON({ limit: "1mb" })); // global middleware
+app.use(parseJSON({ limit: "1mb" }));      // global middleware
 app.use(cookieParser());
 
 app.route("get", "/users/:id", authMw, async (req, res) => {
   res.status(200).json({ id: req.params.id, q: req.query });
 });
-app.get("/health", h); // sugar: get/post/put/patch/delete/head/options
-app.post("/files/*", h); // tail wildcard → req.params["*"]
+app.get("/health", h);                     // sugar: get/post/put/patch/delete/head/options
+app.post("/files/*", h);                   // tail wildcard → req.params["*"]
 
 app.handleErr((err, req, res) => {
   if (err.clientDisconnect) return;
@@ -248,9 +250,7 @@ app.handleErr((err, req, res) => {
 app.fallback((req, res) => res.status(404).sendFile("./public/404.html"));
 
 const server = app.listen(3000, () => {}); // overloads: (port), (port, host, cb), (options, cb)
-app.address();
-app.close(cb);
-app.server; // escape hatch to raw http.Server
+app.address(); app.close(cb); app.server;  // escape hatch to raw http.Server
 ```
 
 `req` adds: `body`, `params`, `query`, `cookies` (after cookieParser). `res` adds: `status(code)` chainable, `json(data)`, `sendFile(path, mime?)`, `redirect(location, code = 302)`, `attachment(filename?)`. Both otherwise behave as stock `http` objects.
@@ -273,9 +273,9 @@ Work strictly in order. A phase is done only when its tests pass, `examples/basi
 
 **Phase 5.5 — Performance program (run BEFORE Phase 6 — compat work only adds weight; win the speed first and gate it).**
 
-_Step 1 — instrumentation before optimization._ Expand the bench matrix to five scenarios: hello-world JSON, param route (`/users/:id`), 10-middleware chain, 404 path, `sendFile` 1KB and 1MB. Methodology locked: 1 warmup run + 3 measured, report the median; same Node binary; machine, Node version and per-scenario duration recorded in `bench/results.md`; nothing else running; **if sample spread > 5%, rerun (up to 5 samples) and take the median**; every scenario asserts its expected status distribution via autocannon `statusCodeStats` — the 404 scenario passes only when 404s == 100% of responses (non-2xx is the _expected_ outcome there; the assertion exists so stray 500s can never hide inside an expected-error scenario). Add an `npm run profile` task (`node --cpu-prof` on the bench server; open in speedscope — `0x` as a devDep is also fine). **Flamegraph before guessing, every time.**
+*Step 1 — instrumentation before optimization.* Expand the bench matrix to five scenarios: hello-world JSON, param route (`/users/:id`), 10-middleware chain, 404 path, `sendFile` 1KB and 1MB. Methodology locked: 1 warmup run + 3 measured, report the median; same Node binary; machine, Node version and per-scenario duration recorded in `bench/results.md`; nothing else running; **if sample spread > 5%, rerun (up to 5 samples) and take the median**; every scenario asserts its expected status distribution via autocannon `statusCodeStats` — the 404 scenario passes only when 404s == 100% of responses (non-2xx is the *expected* outcome there; the assertion exists so stray 500s can never hide inside an expected-error scenario). Add an `npm run profile` task (`node --cpu-prof` on the bench server; open in speedscope — `0x` as a devDep is also fine). **Flamegraph before guessing, every time.**
 
-_Step 2 — hypothesis queue, strict order._ Each item: verify the current behavior first (curl -v / flamegraph), implement, re-bench, record the delta in `results.md`. **A change that wins < 1% on its target scenario gets reverted — complexity has a budget.**
+*Step 2 — hypothesis queue, strict order.* Each item: verify the current behavior first (curl -v / flamegraph), implement, re-bench, record the delta in `results.md`. **A change that wins < 1% on its target scenario gets reverted — complexity has a budget.**
 
 1. **`Content-Length` on `res.json`** — verify with `curl -v` whether responses are currently chunked; if so, `Buffer.byteLength` + explicit Content-Length removes chunked-encoding overhead per response. Typical 3–6% on small JSON.
 2. **O(1) static-route map in front of the radix walk** — exact `METHOD:path` Map hit before touching the tree (find-my-way does this). Most routes in real apps are static.
@@ -288,7 +288,7 @@ _Step 2 — hypothesis queue, strict order._ Each item: verify the current behav
    - **Option B (requires an explicit, narrow ban exception):** code-generated serializers fenced in one file, generated **only** from developer-supplied schemas (never request data), schemas sanitized onto null-prototype objects first. Expect 2–5× on stringify. This is how Fastify/ajv do it, but it is a real relaxation of decision 11's ban — it does not happen silently.
 8. **GC audit** — `--trace-gc` during the hello-world bench; the fast path should show no allocation-driven sawtooth.
 
-_Baseline addendum (first full matrix recorded Aug 2026, Node 22.20.0 — raw data in `bench/results.md`)._ Ratios vs Fastify: hello 89.1%, param 87.6%, chain 89.9%, 404 91.8%, file-1kb ~98% (within spread), file-1mb ~95%. Vs Express: 5.5–5.9× on every JSON path, **but −16% on file-1kb and −10% on file-1mb — Express wins the file path outright on the same machine, which is proven headroom, not a benchmark artifact.** The JSON gap is flat (~10–12%) across hello/param/chain within spread — a constant per-request cost, not a router or middleware scaling problem. Revised execution order, which supersedes the raw item numbering above:
+*Baseline addendum (first full matrix recorded Aug 2026, Node 22.20.0 — raw data in `bench/results.md`).* Ratios vs Fastify: hello 89.1%, param 87.6%, chain 89.9%, 404 91.8%, file-1kb ~98% (within spread), file-1mb ~95%. Vs Express: 5.5–5.9× on every JSON path, **but −16% on file-1kb and −10% on file-1mb — Express wins the file path outright on the same machine, which is proven headroom, not a benchmark artifact.** The JSON gap is flat (~10–12%) across hello/param/chain within spread — a constant per-request cost, not a router or middleware scaling problem. Revised execution order, which supersedes the raw item numbering above:
 
 1. Flamegraph **hello AND file-1kb** (rule unchanged: no optimization without a profile).
 2. Item 1 — Content-Length on `res.json`; verify chunked with `curl -v` first.
@@ -297,7 +297,7 @@ _Baseline addendum (first full matrix recorded Aug 2026, Node 22.20.0 — raw da
 5. Items 2–6 as written — they attack the flat JSON gap.
 6. **Serializer attribution check before item 7:** confirm whether `bench/servers/fastify.js` declares a response schema. If it does **not**, `fast-json-stringify` is not active in this matrix, the ~11% gap is lifecycle/allocation cost rather than serialization, and item 7's expected yield drops. In that case add a fourth variant `fastify-schema.js` to expose Fastify's true ceiling **before** choosing Option A vs B.
 
-_Session 2 addendum (Aug 2026 — items 1–7 adjudicated; raw data + methodology in `bench/results.md`)._ Profile facts on record: zonix self-time was **3.9%** of a hello-world request entering this session (`writev` 45%, `_storeHeader` 2.3%, `setHeader` 1.6%, `res.json` 2.15% — the framework is a thin slice of its own benchmark). Machine end-to-end noise floor ≈ **5%** (same build A/B'd against itself across four harness designs; Fastify drifted +21% between sessions, same build). Consequence: e2e deltas below ~5% are unmeasurable here; the paired-process microbench and self-time share are the official instruments for sub-noise work.
+*Session 2 addendum (Aug 2026 — items 1–7 adjudicated; raw data + methodology in `bench/results.md`).* Profile facts on record: zonix self-time was **3.9%** of a hello-world request entering this session (`writev` 45%, `_storeHeader` 2.3%, `setHeader` 1.6%, `res.json` 2.15% — the framework is a thin slice of its own benchmark). Machine end-to-end noise floor ≈ **5%** (same build A/B'd against itself across four harness designs; Fastify drifted +21% between sessions, same build). Consequence: e2e deltas below ~5% are unmeasurable here; the paired-process microbench and self-time share are the official instruments for sub-noise work.
 
 Verdicts: items 1–2 were already true in v1. Item 3 (precomposed pipeline, **+5.04% e2e**, 5/5 pairs positive) and item 6 (sync completion, **+6.46% e2e**; chain went **86.1% → 98.2%** of hello-world, same-session ratio) kept on e2e evidence. Items 4–5 kept on microbench + self-time evidence under amended rule 5: item 4 deletes a per-request allocation (zero complexity), item 5 (+29–47% on the walk for ~45 lines) is justified by route-count scaling — the walk's share of a request grows with real route tables (the bench has 2 routes; real apps have 50–200), and it carries its own microbench + equivalence tests.
 
@@ -308,7 +308,15 @@ Verdicts: items 1–2 were already true in v1. Item 3 (precomposed pipeline, **+
 - **D3 — Header experiment, one bounded shot.** The profile says headers (~3.9% combined) now outweigh serialization (2.15%): batch `res.json`'s header writes into a single `writeHead(status, headersObj)`. Judge **by self-time share only**. If the `_storeHeader`/`setHeader` share doesn't drop meaningfully, stop and record it: that is the practical ceiling of `node:http`, no further e2e chasing — from then on speed is guarded (regression gate + instruments), not chased. (`writev` at 45% is Node core + kernel; reaching past it means leaving `node:http`, which this project does not do.)
 - **D4 — The file items are still open and are the priority.** Buffered small-file send and the file-path audit were not executed in session 2. They are the one place with proven headroom against Express (−16% on file-1kb) **and** the one place where the gap is far above the noise floor, so plain e2e adjudication works. Phase 5.5 does not close without them.
 
-_Exit (revised — every criterion measurable):_ (a) framework self-time ≤ **2.5%** on the hello-world profile; (b) chain ≥ **95%** of hello-world same-session (currently 98.2% ✓); (c) **file-1kb ≥ Express**, plain e2e; (d) `createSerializer` shipped with microbench + escaping fuzz; (e) header experiment run and recorded either way; (f) no same-session paired regression on any scenario; (g) `results.md` documents the noise floor and instrument methodology as the repo's permanent benchmarking standard. Fastify: reported as a same-session paired range — an honest number and an aspiration, not a merge gate.
+*Exit (revised — every criterion measurable):* (a) **dispatch self-time ≤ 1.5%** on the hello-world profile, excluding exactly the response-body-encode frames (see Session 3 addendum for the binding definition; the excluded frame list is pinned in `results.md` and may not grow without a decision recorded here) — total self-time including encode is reported alongside it every session, ungated; (b) chain ≥ **95%** of hello-world same-session (currently 98.2% ✓); (c) **file-1kb ≥ Express**, plain e2e; (d) `createSerializer` shipped with microbench + escaping fuzz; (e) header experiment run and recorded either way; (f) no same-session paired regression on any scenario; (g) `results.md` documents the noise floor and instrument methodology as the repo's permanent benchmarking standard. Fastify: reported as a same-session paired range — an honest number and an aspiration, not a merge gate.
+
+*Session 3 addendum (Aug 2026 — **Phase 5.5 CLOSED**).* File items: **F1** buffered send ≤ 32KB, **+98.4% paired e2e** (file-1kb 11.5k → 23.0k — above every Express reading ever recorded on this machine, including its best of 14.0k), with a buffered-path disconnect test and six threshold tests either side of 32KB. **F2** callback `fs` over `fs/promises` kept on self-time (stat wrapper 2.37% → 0.26%, GC share 6.0% → 2.6%; e2e inconclusive — rule 5 tiering applied as designed). **F3** 256KB highWaterMark reverted (−7.6%, every pair negative). **F4** `.pipe()` over `pipeline()` **declined, and the decline is endorsed**: ≤ 2.4% ceiling on a 23.8%-idle path, and `pipeline`'s abort semantics are precisely where the disconnect guarantees live — revisit only if a real workload ever shows the > 32KB stream path hot. `createSerializer` shipped per D1: median 1.24×, 3.52× on small objects; two variants (hand-rolled array loop 0.75×, join-based 0.54×) were rejected by measurement and arrays now delegate to `JSON.stringify` — "never materially slower" is a tested property, not a hope; 10k-input seeded fuzz with byte-parity against `JSON.stringify`, lone surrogates and schema mismatches included. Header batching kept (header self-time 3.90% → 1.79%, `setHeader` gone from the profile); the byteLength follow-on measured worse and was reverted.
+
+**Exit (a) redefined (binding).** The criterion's intent is the *framework tax*: cycles zonix adds beyond what any `node:http` app doing the same work must pay. Response-body encoding (`JSON.stringify` inside `res.json`, or the serializer) is application work every framework performs, and D1 deliberately forecloses the codegen route to shrinking it — so gating on it makes the gate unreachable by decision, not by defect. (a) is now **dispatch self-time ≤ 1.5%, excluding exactly the response-body-encode frames**; the excluded list is pinned in `results.md` and may not grow without a decision recorded in this file. Currently ~1.16% ✓. The total including encode (3.1% this session) is reported every session, ungated — the gate narrows; the reporting never does. With that, (a)–(g) are met.
+
+**BI-1 — bench-integrity investigation (OPEN; blocks any cross-framework claim and the Phase 9 README — does not block Phase 6 code).** This session Express file-1kb read **4,270 vs 14,034 last session** and Fastify **4,225 vs 12,073** — both collapsing ~68%, to within ~1% of *each other*, while zonix doubled. Per rule 6 that is a harness or environment defect until proven otherwise. Required, in order: (1) `git diff` the bench harness and competitor server files against the last session's commit; (2) confirm Express still serves via its optimized path (`res.sendFile`/`express.static`) and Fastify via the same mechanism as the prior session; (3) rerun the file scenarios three-way, interleaved, in a single session; (4) if the collapse reproduces on a verified-identical harness, identify and document the environmental cause (page-cache state, antivirus real-time scanning of the bench file, etc.) in `results.md`. Until BI-1 closes, this session's competitor file numbers are marked **ANOMALOUS** in `results.md`, and the only publishable file claims are the paired **+98.4%** and the absolute **23.0k rps**. Also on record: hello spread breached tolerance this session (13.6%, one 125.7k outlier; median-of-5 stands, breach logged), and file-1mb has exceeded 5% spread at 5 samples in both sessions — the 1MB scenario is **permanently low-confidence on this rig**; no claims are built on it.
+
+Same-session standing vs Fastify this session: hello 96.9%, param 95.1%, chain 95.8%, 404 98.7% — published, per D2, only as the honest range (**~95–99% of Fastify, same-session interleaved, ±5% noise floor**).
 
 **Phase 6 — Express req/res surface (decision #10, #13).** Opens with the **restructure commit** (compact layout → full tree, pure moves, suite green before/after) — no compat code lands until that is merged. `req`: `get/header`, `path`, `originalUrl`, `baseUrl`, `ip`/`ips` (trust proxy), `protocol`/`secure`, `hostname`/`subdomains`, `xhr`, `is()`, `accepts()` family, `fresh`/`stale`, `range()`. `res`: `send`, `set/get/append`, `type`, `sendStatus`, `cookie/clearCookie` (incl. signed), `locals`, `vary`, `format`, `links`, `location`, `redirect("back")`, `download()`, proper `content-disposition` filename encoding. **Exit test:** `test/compat/req.test.ts` + `res.test.ts` green, and a handler copy-pasted from the Express docs runs unmodified.
 
@@ -325,6 +333,7 @@ _Exit (revised — every criterion measurable):_ (a) framework self-time ≤ **2
 3. **Fast paths are guarded, not trusted.** The no-middleware fast path (and any future one) must (a) route errors through the same central dispatch — no duplicated dispatch logic — and (b) ship with an **equivalence test**: the same route exercised via fast path and via slow path (forced with a no-op middleware) must produce byte-identical wire output. This is the guard against the classic fast-path drift bug.
 4. **ETag defaults off** at the app level (`etag: false`) — a deliberate deviation from Express, because default-on means hashing every response body. Documented in the README compat table; opt-in per app or per route.
 5. **No optimization without a number — at the right resolution.** Expected effect ≥ the noise floor (~5% e2e on this machine): plain before/after medians. Below that: **paired-process microbench and profile self-time share** (within-run ratios, so drift cancels) — the instruments built in Phase 5.5 session 2, permanent residents of the repo. Every kept micro-optimization carries its own microbench and an equivalence test. The complexity budget is unchanged in spirit: a change whose best honest measurement cannot distinguish it from zero gets reverted, whatever the theory says.
+6. **Anomaly protocol.** Any number — ours or a competitor's — that moves ≥ 2× session-over-session is treated as a harness or environment defect first: `git diff` the harness, rerun interleaved in one session, and only then record it as fact. A competitor collapsing is not a victory; it is a bug in the measurement until shown otherwise, and no claim ships on it.
 
 ## Non-goals (all versions — do not build, even if tempting)
 

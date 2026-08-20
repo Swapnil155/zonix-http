@@ -9,5 +9,6 @@ bench/.micro-baseline.json
 bench/.baseline.json
 bench/.final.json
 bench/.final3.json
+bench/.bi1.json
 *.log
 .DS_Store
