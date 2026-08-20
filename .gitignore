@@ -8,5 +8,6 @@ bench/.baseline-src/
 bench/.micro-baseline.json
 bench/.baseline.json
 bench/.final.json
+bench/.final3.json
 *.log
 .DS_Store

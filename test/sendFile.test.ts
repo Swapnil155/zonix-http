@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, test } from "node:test";
+import { after, before, describe, test } from "node:test";
 import request from "supertest";
 import { ErrorCode, type ZonixError } from "../lib/index.js";
 import { makeApp } from "./helpers.js";
@@ -190,5 +192,78 @@ describe("res.attachment", () => {
     const res = await request(app.server).get("/dl").expect(200);
     assert.match(String(res.headers["content-disposition"]), /greeting\.txt/);
     assert.equal(res.headers["content-type"], "text/plain; charset=utf-8");
+  });
+});
+
+/**
+ * Files at or below 32KB are read into one buffer and sent with a single end();
+ * larger files are streamed. Both sides of that threshold must be
+ * indistinguishable on the wire apart from the body itself.
+ */
+describe("res.sendFile: buffered / streamed threshold", () => {
+  let dir: string;
+  const sizes = {
+    empty: 0,
+    small: 1024,
+    justUnder: 32 * 1024 - 1,
+    exact: 32 * 1024,
+    justOver: 32 * 1024 + 1,
+    large: 256 * 1024,
+  };
+  const paths: Record<string, string> = {};
+
+  before(() => {
+    dir = mkdtempSync(join(tmpdir(), "zonix-threshold-"));
+    for (const [name, size] of Object.entries(sizes)) {
+      const file = join(dir, `${name}.txt`);
+      // Deterministic, non-uniform content so a truncated or shifted body shows up.
+      writeFileSync(file, Buffer.from(Array.from({ length: size }, (_, i) => 97 + (i % 26))));
+      paths[name] = file;
+    }
+  });
+
+  after(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  for (const name of Object.keys(sizes)) {
+    test(`serves the ${name} file with byte-exact body and length`, async () => {
+      const app = makeApp();
+      app.get("/f", (_req, res) => res.sendFile(paths[name] as string));
+
+      const expected = readFileSync(paths[name] as string);
+      const res = await request(app.server).get("/f").buffer(true).expect(200);
+
+      assert.equal(res.headers["content-type"], "text/plain; charset=utf-8");
+      assert.equal(res.headers["content-length"], String(expected.byteLength));
+      assert.equal(res.headers["transfer-encoding"], undefined, "must not be chunked");
+
+      const body = Buffer.isBuffer(res.body) ? res.body : Buffer.from(res.text ?? "", "utf8");
+      assert.equal(body.byteLength, expected.byteLength);
+      assert.ok(body.equals(expected), "body bytes must match the file exactly");
+    });
+  }
+
+  test("headers are identical either side of the threshold", async () => {
+    const app = makeApp();
+    app.get("/under", (_req, res) => res.sendFile(paths["justUnder"] as string));
+    app.get("/over", (_req, res) => res.sendFile(paths["justOver"] as string));
+
+    const under = await request(app.server).get("/under").buffer(true).expect(200);
+    const over = await request(app.server).get("/over").buffer(true).expect(200);
+
+    const shape = (h: Record<string, unknown>) => Object.keys(h).sort().join(",");
+    assert.equal(shape(under.headers), shape(over.headers), "same header set on both paths");
+    assert.equal(under.headers["content-type"], over.headers["content-type"]);
+  });
+
+  test("HEAD on a buffered file sends headers without a body", async () => {
+    const app = makeApp();
+    // Registered explicitly: HEAD does not fall back to GET routes in v1.
+    app.head("/f", (_req, res) => res.sendFile(paths["small"] as string));
+
+    const res = await request(app.server).head("/f").expect(200);
+    assert.equal(res.headers["content-length"], String(sizes.small));
+    assert.equal(res.text, undefined);
   });
 });

@@ -1,40 +1,49 @@
 # HANDOFF
 
-**Phase:** 5.5 — steps 1–2 done through item 6. **Stopped at item 7 awaiting Swapnil's serializer decision.**
+**Phase:** 5.5 — **complete except exit (a)**, which needs one decision from Swapnil. Next: Phase 6 (opens with the restructure commit).
 
-## Done this session
+## Done this session (session 3)
 
-- **Step 1 (instrumentation).** Bench matrix expanded to 6 scenarios × 3 frameworks (`bench/servers/`,
-  `bench/run.mjs`, `bench/run.sh` now a wrapper). `npm run profile` = `--cpu-prof` + a self-time ranking so the
-  "flamegraph before guessing" rule works from the terminal. Added `bench/ab.mjs` (end-to-end A/B),
-  `bench/micro.ts` + `bench/micro-ab.mjs` (router A/B), `bench/snapshot.mjs`. All results in `bench/results.md`.
-- **Step 2 items 1–6.** 1 and 2 were already satisfied in v1 (verified with `curl -v` / code, no change).
-  3, 4, 5, 6 implemented and kept, each with a recorded number. Chain scenario is the big winner:
-  `#runChain` self time 4.91% → gone, zonix's own frames on chain 9.1% → 3.4%, end-to-end +5.0% then +6.5%.
-- **Performance rule 3 satisfied:** `test/fastpath.test.ts` proves fast path and full chain produce byte-identical
-  wire output across 12 targets (incl. errors, sendFile, redirect, 404) and that both funnel through one dispatcher.
-- **Amendment A2 applied:** `ERR_STREAM_DESTROYED` added to the disconnect code list.
-- 147 tests green on Node 22.20.0 **and** 20.20.2; typecheck, build, prettier clean; still zero runtime deps.
+- **File items (D4) — the biggest win of the program.** Flamegraph showed file-1kb was almost pure
+  stream/promise scaffolding (GC 20.3%, FastBuffer 13.9%, DOMException 11.1%).
+  - **F1 buffered send ≤ 32KB**: `readFile` + one `end()`. **+98.4% e2e**, every pair positive.
+  - **F2 callback `fs`** instead of `node:fs/promises`: `stat @ promises` 2.37% → 0.26%, GC 6.0% → 2.6%.
+  - **F3 highWaterMark 256KB: REVERTED** (−7.6%, every pair negative).
+  - **F4 `.pipe()` instead of `pipeline()`: NOT DONE** — ~2.4% ceiling on a 23.8%-idle path, against every
+    disconnect guarantee. Declined on the flamegraph; overrule if wanted.
+- **Serializer (D1): `createSerializer` shipped**, Option A, no codegen. Median **1.24×**, **3.52×** on small
+  objects, never materially slower. Arrays delegate to `JSON.stringify` after two hand-rolled attempts measured
+  0.75× and 0.54× — V8's array path is not beatable from JS without codegen.
+- **Header experiment (D3): kept.** Header self-time **3.90% → 1.79%**, `setHeader` gone from the profile.
+  A follow-on (send string, size with `byteLength`) measured worse and was reverted.
+- **Tests: 165 green** on Node 22.20.0 and 20.20.2 — including the new buffered-path disconnect test, six
+  threshold tests either side of 32KB, and a 10k-input seeded escaping fuzz suite (`test/fuzz/`, replay via `SEED=`).
+- **Bench harness** now asserts each scenario's status distribution (the 404 scenario passes only at 100% 404s)
+  and re-runs up to 5 samples when spread exceeds 5%.
 
-## Two findings that change how this repo measures
+## Exit criteria (revised)
 
-1. **End-to-end noise floor here is ~5%** (proved by A/B-ing a build against itself in four harness designs;
-   fastify drifted +21% between sessions). **Absolute cross-session rps must not be compared** — use
-   `bench/ab.mjs` paired deltas, profile self-time shares, or same-session ratios.
-2. **zonix's own code is 3.4–9.1% of a request** (`writev` alone is 45%). So the "< 1% on its target scenario
-   gets reverted" rule cannot be adjudicated end-to-end for router-level work — the subsystem is smaller than
-   the noise. Items 4 and 5 were **kept as a deliberate deviation** (see `bench/results.md`); if the rule is read
-   strictly, **item 5 is the one to revert** — item 4 costs no complexity.
+(b) chain 97.0% of hello ✓ · (c) file-1kb 23,026 vs Express 4,270 ✓ · (d) serializer + microbench + fuzz ✓ ·
+(e) header experiment recorded ✓ · (f) no kept regression ✓ · (g) methodology documented ✓
+
+**(a) framework self-time ≤ 2.5% on hello: NOT MET at 3.1%** (medians 2.9 / 3.3 / 3.1).
+
+## The one open decision
+
+V8 attributes the `JSON.stringify` builtin to its calling frame, so the response encode is counted inside our
+`json` frame (1.94% of the 3.1%). The framework's own dispatch machinery is **~1.16%**. Getting under 2.5%
+means making `res.json` faster, which D1 rules out (serializer stays opt-in); the one legal attempt at the
+remaining allocation measured worse and was reverted. **Either redefine (a) as "dispatch self-time excluding
+the response encode ≤ 1.5%" (currently ~1.16% ✓), or retire it.** Full reasoning in `bench/results.md`.
+
+## Standing measurement rules (now permanent)
+
+Noise floor ~5% e2e; **never compare rps across sessions** (Express's own file-1kb read 14,034 one session and
+4,270 the next). Use `bench/ab.mjs` paired deltas, `bench/micro-ab.mjs`, or profile self-time share. Trust an
+e2e verdict only when every paired run agrees in sign.
 
 ## Next
 
-1. **Item 7 — decide Option A (closures) vs Option B (codegen + ban exception).** Fully measured, nothing
-   implemented. Recommendation and numbers in `bench/results.md`; short version: most of the win is the escaping
-   technique, which Option A also gets; B's remaining edge is worth ~0.3–0.8% end-to-end.
-2. Item 8 (GC audit, `--trace-gc`) — not started.
-3. Phase 5.5 exit bar (≥95% of Fastify on hello) **is not met and not currently measurable** — 89.1% this
-   session, 108% last session for the same build. Needs a quiet machine before it can be certified either way.
-
-## Blockers
-
-Item 7 decision. Item 8 and the exit bar are unblocked but should follow it.
+1. Settle exit (a), then Phase 5.5 closes.
+2. Item 8 (GC audit, `--trace-gc`) — still not started.
+3. Phase 6 opens with the restructure commit (compact tree → full tree, pure moves, suite green either side).

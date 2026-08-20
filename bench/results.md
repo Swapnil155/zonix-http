@@ -148,9 +148,152 @@ Findings that bear on the decision:
    header machinery (`_storeHeader` 2.3%, `setHeader` 1.6%) and `writev` (46%),
    not in serialization.
 
+---
+
+# Session 3 — file items, serializer, header experiment
+
+Same machine, Node v22.20.0. Per-scenario durations, as printed by the runner:
+hello 10s @ c100/p10; param, chain, notfound, file-1kb 5s @ c100/p10; file-1mb
+5s @ c50/p1. Every scenario now asserts its status distribution (the 404
+scenario passes only when 404s are 100% of responses), and a sample whose spread
+exceeds 5% is re-run up to 5 samples before the median is taken.
+
+## File items (D4) — the priority, and the biggest win of the program
+
+The file-1kb flamegraph found the cost was almost entirely stream/promise
+scaffolding wrapped around a 1KB read:
+
+| Frame                | Before | After buffered send | After callback `fs` |
+| -------------------- | -----: | ------------------: | ------------------: |
+| (garbage collector)  | 20.29% |               6.04% |               2.58% |
+| `FastBuffer`         | 13.93% |               1.06% |               1.16% |
+| `DOMException`       | 11.13% |                   — |                   — |
+| `bind @ async_hooks` |  4.20% |                   — |                   — |
+| `stat @ promises`    |  2.28% |               2.37% |               0.26% |
+| `open @ promises`    |      — |               2.64% |                   — |
+
+| #   | Change                                                         | Instrument                                                          | Delta                                                                                      | Verdict                  |
+| --- | -------------------------------------------------------------- | ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ | ------------------------ |
+| F1  | Buffered send for files ≤ 32KB (`readFile` + one `end`)        | e2e A/B, 5 pairs                                                    | **+98.4%** (11,518 → 22,875 rps; every pair positive, +88.6%..+100.1%)                     | **KEEP**                 |
+| F2  | Callback `fs.stat`/`fs.readFile` instead of `node:fs/promises` | e2e inconclusive (+3.98% median, signs disagreed) → self-time share | `stat @ promises` **2.37% → 0.26%**, `open @ promises` wrapper gone, GC **6.04% → 2.58%**  | **KEEP** on self-time    |
+| F3  | `highWaterMark` 256KB for streamed files                       | e2e A/B, 5 pairs                                                    | **−7.6%**, every pair negative (−22.1%..−0.0%)                                             | **REVERTED**             |
+| F4  | `.pipe()` + manual wiring instead of `pipeline()`              | flamegraph                                                          | pipeline scaffolding ~2.4% of a path that is **23.8% idle** and 25.4% kernel `writeBuffer` | **NOT DONE** — see below |
+
+**F4 was declined on the flamegraph, not on effort.** D4 makes disconnect
+tagging and backpressure correctness non-negotiable, and `pipeline()` is what
+provides both. The measured ceiling for hand-rolling stream teardown is ~2.4% on
+a path that is mostly waiting on the socket. Re-implementing the teardown that
+every disconnect guarantee rests on, for that, is a bad trade. Flagged so it can
+be overruled.
+
+Disconnect behaviour is unchanged: the streamed path still goes through
+`pipeline()`, and the buffered path gained its own disconnect test (client
+vanishes before the write lands, ×20, asserting no unhandled rejections and that
+anything surfacing is tagged `clientDisconnect`). Threshold tests cover 0 / 1KB /
+32KB−1 / 32KB / 32KB+1 / 256KB for byte-exact body and length, and prove the
+header set is identical either side of the threshold.
+
+## Serializer (D1) — Option A shipped
+
+`createSerializer(schema)`: closure-composed, char-scan escaping, **no codegen**.
+Opt-in — `res.json` is untouched, and a route that never calls it pays nothing.
+
+| Payload                 | `JSON.stringify` | `createSerializer` |   speedup |
+| ----------------------- | ---------------: | -----------------: | --------: |
+| hello-world             |       14,741,522 |         51,833,345 | **3.52×** |
+| api-object (5 fields)   |        4,893,594 |          6,339,908 | **1.30×** |
+| nested                  |        4,058,718 |          5,021,270 | **1.24×** |
+| list of 20              |          872,967 |            855,308 |     0.98× |
+| strings needing escapes |        4,995,474 |          4,830,288 |     0.97× |
+
+Median **1.24×**, and never materially slower — which took two rejected attempts
+to reach. A hand-written element loop ran at **0.75×** of `JSON.stringify` on a
+20-object list, and collecting-then-joining was worse at **0.54×**: V8's array
+path is not beatable from JavaScript without codegen, which is banned. Arrays
+therefore delegate wholesale, which is exactly 1.0×, while an array _field_
+inside an object still leaves the surrounding object on the fast path.
+
+Parity is the contract, and it is fuzz-enforced. `test/fuzz/serialize.fuzz.ts`
+runs 10,000 seeded inputs across 7 schemas — quotes, backslashes, control
+characters, astral text, **lone surrogates**, and values that deliberately
+violate their schema — asserting byte-equality with `JSON.stringify`, that the
+output re-parses, and that escaping stays linear. Failures print `SEED=` for
+exact replay.
+
+## Header experiment (D3) — one bounded shot, kept
+
+Batched `res.json`'s two `setHeader` calls into a single `writeHead(status,
+headers)`. Judged on self-time share only, as D3 requires:
+
+| Frame            |    Before |     After |
+| ---------------- | --------: | --------: |
+| `_storeHeader`   |     2.32% |     1.25% |
+| `setHeader`      |     1.58% |  — (gone) |
+| `writeHead`      |         — |     0.54% |
+| **header total** | **3.90%** | **1.79%** |
+
+The share dropped meaningfully, so the change stands; wire output is unchanged.
+A follow-on attempt to also drop the `Buffer.from` (send the string, size it with
+`Buffer.byteLength`) measured **worse** — framework self-time 3.10% → 3.39% —
+and was reverted.
+
+## Final matrix
+
+| Scenario |   zonix | express | fastify | vs express | vs fastify |
+| -------- | ------: | ------: | ------: | ---------: | ---------: |
+| hello    | 144,250 |  26,731 | 148,800 |       5.4× |      96.9% |
+| param    | 140,045 |  26,776 | 147,213 |       5.2× |      95.1% |
+| chain    | 139,994 |  26,741 | 146,138 |       5.2× |      95.8% |
+| notfound | 137,459 |  23,566 | 139,302 |       5.8× |      98.7% |
+| file-1kb |  23,026 |   4,270 |   4,225 |       5.4× |       545% |
+| file-1mb |   1,716 |   1,698 |   1,738 |       1.0× |      98.7% |
+
+Read with the noise floor in mind (D2): these are one session's medians, and
+spread stayed above 5% for zonix/hello (13.6%) and for every framework's
+file-1mb even after 5 samples. **The file-1kb cross-framework figure is unstable
+between sessions** — Express measured 14,034 in the previous session and 4,270
+here — so the honest claim is the paired one: buffered send took zonix's own
+file-1kb from 11,518 to 22,875 rps (+98.4%, every pair positive), clearing
+Express's best recorded number of 14,034 outright.
+
+## Exit criteria (revised)
+
+|     | Criterion                                       | Result                                                                          |
+| --- | ----------------------------------------------- | ------------------------------------------------------------------------------- |
+| (a) | framework self-time ≤ 2.5% on hello             | **NOT MET — 3.1%** (medians 2.9 / 3.3 / 3.1). See below.                        |
+| (b) | chain ≥ 95% of hello, same session              | **MET — 97.0%** (139,994 / 144,250)                                             |
+| (c) | file-1kb ≥ Express                              | **MET — 23,026 vs 4,270 this session; also clears the 14,034 recorded earlier** |
+| (d) | `createSerializer` + microbench + escaping fuzz | **MET**                                                                         |
+| (e) | header experiment run and recorded either way   | **MET — kept, 3.90% → 1.79%**                                                   |
+| (f) | no same-session paired regression               | **MET** — the one regression found (F3) was reverted and parity re-confirmed    |
+| (g) | results.md documents noise floor + instruments  | **MET**                                                                         |
+
+### Why (a) is not met, and what it is actually measuring
+
+The 3.1% splits as:
+
+| Frame                                       | Share |
+| ------------------------------------------- | ----: |
+| `json` (JSON.stringify + Buffer.from + end) | 1.94% |
+| `ZonixResponse` constructor                 | 0.40% |
+| `#handle`                                   | 0.35% |
+| `find`                                      | 0.23% |
+| everything else                             | 0.17% |
+
+V8 attributes the `JSON.stringify` builtin to its calling frame, so the JSON
+encode — work any framework must do — is counted inside `json`. The framework's
+own dispatch machinery is **~1.16%**. Getting the total under 2.5% means making
+`res.json` faster, and D1 deliberately keeps `res.json` on `JSON.stringify` with
+the serializer opt-in; the one legal attempt at the remaining allocation
+measured worse and was reverted.
+
+So (a) as written is unreachable without reopening D1. Two honest options:
+redefine (a) as **framework dispatch self-time excluding the response encode
+≤ 1.5%** (currently ~1.16% ✓), or accept ~3.1% as the floor for `res.json` +
+`JSON.stringify` and retire the criterion.
+
 ## Open
 
-- Item 7 decision (Option A vs B) — blocked on Swapnil.
-- Item 8 (GC audit, `--trace-gc`) — not started.
-- A quiet machine (or a CI runner with fewer background processes) is needed
-  before the ≥95%-of-Fastify exit bar can be certified either way.
+- Exit (a): redefine or retire (above) — the one thing blocking a clean close.
+- F4 (`.pipe()` vs `pipeline()`): declined on flamegraph evidence; overrule if wanted.
+- Item 8 (GC audit, `--trace-gc`): still not started.

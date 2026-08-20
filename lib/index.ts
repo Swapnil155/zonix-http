@@ -457,6 +457,7 @@ export { parseJSON, type ParseJSONOptions } from "./middleware/parseJSON.js";
 export { serveStatic, type ServeStaticOptions } from "./middleware/serveStatic.js";
 export { cookieParser } from "./middleware/cookieParser.js";
 export { cors, type CorsOptions, type OriginResolver } from "./middleware/cors.js";
+export { createSerializer, escapeString, type Schema, type Serializer } from "./serialize.js";
 export { ZonixRequest } from "./request.js";
 export { ZonixResponse } from "./response.js";
 export { ErrorCode, frameworkError, isClientDisconnect } from "./errors.js";

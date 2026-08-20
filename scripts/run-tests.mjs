@@ -7,11 +7,19 @@ import { spawnSync } from "node:child_process";
 import { readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-const testDir = fileURLToPath(new URL("../test/", import.meta.url));
-const files = readdirSync(testDir)
-  .filter((name) => name.endsWith(".test.ts"))
-  .sort()
-  .map((name) => `test/${name}`);
+const root = fileURLToPath(new URL("../", import.meta.url));
+const files = [
+  ...readdirSync(root + "test/")
+    .filter((name) => name.endsWith(".test.ts"))
+    .sort()
+    .map((name) => `test/${name}`),
+  // Fuzz suites live in their own directory and are named *.fuzz.ts, but they
+  // are ordinary node:test files and run as part of the suite.
+  ...readdirSync(root + "test/fuzz/")
+    .filter((name) => name.endsWith(".fuzz.ts"))
+    .sort()
+    .map((name) => `test/fuzz/${name}`),
+];
 
 if (files.length === 0) {
   console.error("No test files found in test/");
@@ -21,7 +29,7 @@ if (files.length === 0) {
 const result = spawnSync(
   process.execPath,
   ["--import", "tsx", "--test", ...process.argv.slice(2), ...files],
-  { stdio: "inherit", cwd: fileURLToPath(new URL("..", import.meta.url)) },
+  { stdio: "inherit", cwd: root },
 );
 
 process.exit(result.status ?? 1);

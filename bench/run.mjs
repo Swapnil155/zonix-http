@@ -16,9 +16,33 @@ import { fileURLToPath } from "node:url";
 
 const SCENARIOS = [
   // hello keeps -d 10 so its number stays comparable with the v1 README table.
-  { id: "hello", path: "/", connections: 100, pipelining: 10, duration: 10, warmup: 3 },
-  { id: "param", path: "/users/42", connections: 100, pipelining: 10, duration: 5, warmup: 2 },
-  { id: "chain", path: "/chain", connections: 100, pipelining: 10, duration: 5, warmup: 2 },
+  {
+    id: "hello",
+    path: "/",
+    connections: 100,
+    pipelining: 10,
+    duration: 10,
+    warmup: 3,
+    expect: 200,
+  },
+  {
+    id: "param",
+    path: "/users/42",
+    connections: 100,
+    pipelining: 10,
+    duration: 5,
+    warmup: 2,
+    expect: 200,
+  },
+  {
+    id: "chain",
+    path: "/chain",
+    connections: 100,
+    pipelining: 10,
+    duration: 5,
+    warmup: 2,
+    expect: 200,
+  },
   {
     id: "notfound",
     path: "/no-such-route",
@@ -26,10 +50,29 @@ const SCENARIOS = [
     pipelining: 10,
     duration: 5,
     warmup: 2,
+    // Non-2xx is the EXPECTED outcome here; the assertion exists so a stray 500
+    // can never hide inside an expected-error scenario.
+    expect: 404,
   },
-  { id: "file-1kb", path: "/file/small", connections: 100, pipelining: 10, duration: 5, warmup: 2 },
+  {
+    id: "file-1kb",
+    path: "/file/small",
+    connections: 100,
+    pipelining: 10,
+    duration: 5,
+    warmup: 2,
+    expect: 200,
+  },
   // Pipelining a 1MB body measures the kernel, not the framework: keep it at 1.
-  { id: "file-1mb", path: "/file/large", connections: 50, pipelining: 1, duration: 5, warmup: 2 },
+  {
+    id: "file-1mb",
+    path: "/file/large",
+    connections: 50,
+    pipelining: 1,
+    duration: 5,
+    warmup: 2,
+    expect: 200,
+  },
 ];
 
 const FRAMEWORKS = [
@@ -122,22 +165,35 @@ for (const framework of frameworks) {
       await hit(url, scenario, scenario.warmup);
 
       const samples = [];
-      const errorCounts = [];
-      for (let i = 0; i < runs; i++) {
+      let spread = 0;
+      let rps = 0;
+      // Locked methodology: N measured runs, median. If the spread exceeds 5%
+      // the sample is untrustworthy, so add runs (to a cap of 5) and re-median.
+      const maxSamples = Math.max(runs, 5);
+      for (let i = 0; i < maxSamples; i++) {
         process.stdout.write(` run${i + 1}`);
         const r = await hit(url, scenario, scenario.duration);
         samples.push(r.requests.average);
-        errorCounts.push(r.non2xx + r.errors);
+
+        // Every response must carry the status the scenario expects.
+        const stats = r.statusCodeStats ?? {};
+        const counted = Object.entries(stats).reduce((sum, [, v]) => sum + (v.count ?? 0), 0);
+        const wanted = stats[String(scenario.expect)]?.count ?? 0;
+        if (counted > 0 && wanted !== counted) {
+          const seen = Object.entries(stats)
+            .map(([code, v]) => `${code}x${v.count}`)
+            .join(" ");
+          throw new Error(
+            `${framework.id}/${scenario.id}: expected all ${scenario.expect} responses, saw ${seen}`,
+          );
+        }
+
+        rps = median(samples);
+        spread = (Math.max(...samples) - Math.min(...samples)) / rps;
+        if (samples.length >= runs && spread <= 0.05) break;
       }
 
-      const rps = median(samples);
-      const spread = samples.length > 1 ? (Math.max(...samples) - Math.min(...samples)) / rps : 0;
-      results[framework.id][scenario.id] = {
-        rps,
-        samples,
-        spreadPct: spread * 100,
-        badResponses: Math.max(...errorCounts),
-      };
+      results[framework.id][scenario.id] = { rps, samples, spreadPct: spread * 100 };
       process.stdout.write(
         ` -> ${Math.round(rps).toLocaleString("en-US")} rps (±${(spread * 100).toFixed(1)}%)\n`,
       );
@@ -170,16 +226,25 @@ if (frameworks.length > 1 && results.zonix && results.fastify) {
   }
 }
 
-const badTotal = Object.values(results)
-  .flatMap((byScenario) => Object.values(byScenario))
-  .reduce((sum, r) => sum + r.badResponses, 0);
-if (badTotal > 0) {
+const noisy = Object.entries(results).flatMap(([fw, byScenario]) =>
+  Object.entries(byScenario)
+    .filter(([, r]) => r.spreadPct > 5)
+    .map(([id, r]) => `${fw}/${id} ${r.spreadPct.toFixed(1)}%`),
+);
+if (noisy.length > 0) {
   console.log("");
-  console.log(`WARNING: ${badTotal} non-2xx/errored responses seen (404 scenario expects them).`);
+  console.log(`Spread still > 5% after ${Math.max(runs, 5)} samples: ${noisy.join(", ")}`);
 }
 
 console.log("");
-console.log(`node ${process.version} · ${runs} measured run(s) + warmup · median reported`);
+console.log(
+  `node ${process.version} · >=${runs} measured runs + warmup · median · ` +
+    `status asserted per scenario`,
+);
+console.log(
+  "durations: " +
+    SCENARIOS.map((s) => `${s.id} ${s.duration}s@c${s.connections}p${s.pipelining}`).join(", "),
+);
 
 const jsonPath = args.get("json");
 if (jsonPath) {

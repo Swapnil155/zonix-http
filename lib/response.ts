@@ -1,5 +1,4 @@
-import { createReadStream } from "node:fs";
-import { stat } from "node:fs/promises";
+import { createReadStream, readFile as readFileCb, stat as statCb, type Stats } from "node:fs";
 import { ServerResponse } from "node:http";
 import { pipeline } from "node:stream/promises";
 import { ErrorCode, frameworkError, wasDispatched } from "./errors.js";
@@ -8,6 +7,42 @@ import type { ZonixRequest } from "./request.js";
 
 /** Where an error raised outside the middleware chain is sent. Wired by `Zonix`. */
 type ErrorSink = (err: unknown) => void;
+
+/**
+ * At or below this size a file is read into one buffer and sent with a single
+ * `end()`, instead of being streamed.
+ *
+ * Streaming a small file is nearly all scaffolding: `createReadStream` allocates
+ * a 64KB highWaterMark buffer to move 1KB, and `stream/promises.pipeline` adds
+ * abort plumbing and async_hooks binding on top. Profiling file-1kb put 20% of
+ * self time in GC, 14% in FastBuffer and 11% in DOMException before this path
+ * existed. Backpressure is irrelevant at this size - the payload fits in a
+ * single socket write - so the buffered path is both faster and simpler.
+ */
+const BUFFERED_MAX_BYTES = 32 * 1024;
+
+const JSON_CONTENT_TYPE = "application/json; charset=utf-8";
+
+/**
+ * Callback `fs` wrapped in one plain promise each, rather than `node:fs/promises`.
+ *
+ * The promise API routes through FileHandle and primordial SafePromise layers
+ * that showed up as ~5% of self time on the file-1kb profile (`stat @ promises`
+ * plus `open @ promises`) for two calls that do almost no work. A single
+ * hand-rolled promise per call has the same semantics - the same errno errors
+ * arrive at the same place - with none of that scaffolding.
+ */
+function statAsync(path: string): Promise<Stats> {
+  return new Promise((resolve, reject) => {
+    statCb(path, (err, stats) => (err ? reject(err) : resolve(stats)));
+  });
+}
+
+function readFileAsync(path: string): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    readFileCb(path, (err, data) => (err ? reject(err) : resolve(data)));
+  });
+}
 
 /**
  * The response object handed to every middleware and handler.
@@ -43,11 +78,22 @@ export class ZonixResponse extends ServerResponse<ZonixRequest> {
   /** Serialize `data` as JSON and end the response. */
   json(data: unknown): void {
     this.#assertOpen(this.json);
+    // A Buffer, not a string: sending the string and measuring it with
+    // Buffer.byteLength was tried and measured slightly WORSE (framework
+    // self-time 3.10% -> 3.39% on the hello profile), so the encode stays here.
     const body = Buffer.from(JSON.stringify(data === undefined ? null : data), "utf8");
-    if (!this.hasHeader("Content-Type")) {
-      this.setHeader("Content-Type", "application/json; charset=utf-8");
+    if (this.hasHeader("Content-Type")) {
+      this.setHeader("Content-Length", body.byteLength);
+    } else {
+      // One writeHead instead of two setHeader calls plus the implicit head
+      // write. Headers already set through setHeader are still merged in by
+      // node:http, with these taking precedence, so callers that set their own
+      // headers first are unaffected.
+      this.writeHead(this.statusCode, {
+        "Content-Type": JSON_CONTENT_TYPE,
+        "Content-Length": body.byteLength,
+      });
     }
-    this.setHeader("Content-Length", body.byteLength);
     this.end(body);
   }
 
@@ -132,9 +178,9 @@ export class ZonixResponse extends ServerResponse<ZonixRequest> {
       );
     }
 
-    let stats;
+    let stats: Stats;
     try {
-      stats = await stat(path);
+      stats = await statAsync(path);
     } catch (err) {
       const code = (err as NodeJS.ErrnoException).code;
       if (code === "ENOENT" || code === "ENOTDIR") {
@@ -167,10 +213,24 @@ export class ZonixResponse extends ServerResponse<ZonixRequest> {
       );
     }
 
+    if (stats.size <= BUFFERED_MAX_BYTES) {
+      const body = await readFileAsync(path);
+      // Length comes from the bytes actually read, not from the earlier stat:
+      // if the file changed in between, a stale Content-Length would corrupt
+      // the response framing. The streamed path cannot make this check.
+      if (!this.hasHeader("Content-Type")) this.setHeader("Content-Type", type);
+      this.setHeader("Content-Length", body.byteLength);
+      this.end(body);
+      return;
+    }
+
     if (!this.hasHeader("Content-Type")) this.setHeader("Content-Type", type);
     this.setHeader("Content-Length", stats.size);
 
     // pipeline() gives backpressure, error propagation and cleanup of both ends.
+    // highWaterMark is left at Node's default: 256KB was measured at -7.6% on
+    // file-1mb (every paired run negative). The path is ~24% idle, so fewer,
+    // larger reads buy nothing and cost more per allocation.
     await pipeline(createReadStream(path), this);
   }
 

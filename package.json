@@ -27,7 +27,8 @@
     "format": "prettier --write \"{lib,test,bench,examples}/**/*.{ts,js}\" \"*.{json,md}\"",
     "example": "tsx examples/basic.ts",
     "profile": "npm run build && node bench/profile.mjs",
-    "micro": "tsx bench/micro.ts"
+    "micro": "tsx bench/micro.ts",
+    "micro:serializer": "tsx bench/serializer.ts"
   },
   "keywords": [
     "http",
