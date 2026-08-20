@@ -34,7 +34,9 @@ export class ZonixRequest extends IncomingMessage {
     const q = url.indexOf("?");
     if (q === -1 || q === url.length - 1) return (this.#query = EMPTY);
 
-    const out: StringMap = {};
+    // Null-prototype (like Express's query parser) so a "__proto__" or
+    // "constructor" key is inert data rather than a pollution vector.
+    const out: StringMap = Object.create(null) as StringMap;
     let found = false;
     for (const [key, value] of new URLSearchParams(url.slice(q + 1))) {
       out[key] = value;

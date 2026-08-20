@@ -1,6 +1,12 @@
 import http from "node:http";
 import type { AddressInfo, ListenOptions } from "node:net";
-import { ErrorCode, frameworkError, isClientDisconnect, markDispatched, toError } from "./errors.js";
+import {
+  ErrorCode,
+  frameworkError,
+  isClientDisconnect,
+  markDispatched,
+  toError,
+} from "./errors.js";
 import { ZonixRequest } from "./request.js";
 import { ZonixResponse } from "./response.js";
 import { Router } from "./router.js";
@@ -372,6 +378,10 @@ export default function zonix(options?: ZonixOptions): Zonix {
   return new Zonix(options);
 }
 
+export { parseJSON, type ParseJSONOptions } from "./middleware/parseJSON.js";
+export { serveStatic, type ServeStaticOptions } from "./middleware/serveStatic.js";
+export { cookieParser } from "./middleware/cookieParser.js";
+export { cors, type CorsOptions, type OriginResolver } from "./middleware/cors.js";
 export { ZonixRequest } from "./request.js";
 export { ZonixResponse } from "./response.js";
 export { ErrorCode, frameworkError, isClientDisconnect } from "./errors.js";

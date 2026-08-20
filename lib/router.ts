@@ -176,7 +176,12 @@ export class Router {
  * Values pushed onto `captured` are popped again when a branch is abandoned, so
  * the array always mirrors the branch currently being explored.
  */
-function walk(node: Node, segments: string[], index: number, captured: string[]): Route | undefined {
+function walk(
+  node: Node,
+  segments: string[],
+  index: number,
+  captured: string[],
+): Route | undefined {
   if (index === segments.length) {
     if (node.route !== undefined) return node.route;
     // "/files" may still be served by "/files/*" with an empty tail.
@@ -240,18 +245,13 @@ function decodeSegment(segment: string, path: string): string {
   try {
     return decodeURIComponent(segment);
   } catch {
-    throw frameworkError(
-      `Cannot decode path: ${path}`,
-      decodeSegment,
-      ErrorCode.BAD_ENCODING,
-      400,
-    );
+    throw frameworkError(`Cannot decode path: ${path}`, decodeSegment, ErrorCode.BAD_ENCODING, 400);
   }
 }
 
 function zip(names: readonly string[], values: readonly string[]): StringMap {
   if (names.length === 0) return EMPTY;
-  const params: StringMap = {};
+  const params: StringMap = Object.create(null) as StringMap;
   for (let i = 0; i < names.length; i++) {
     params[names[i] as string] = values[i] ?? "";
   }

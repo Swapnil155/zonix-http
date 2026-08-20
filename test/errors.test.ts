@@ -137,6 +137,9 @@ describe("error dispatch", () => {
   test("only one error handler may be registered", () => {
     const app = makeApp();
     app.handleErr((_err, _req, res) => res.status(500).end());
-    assert.throws(() => app.handleErr((_err, _req, res) => res.status(500).end()), /already registered/);
+    assert.throws(
+      () => app.handleErr((_err, _req, res) => res.status(500).end()),
+      /already registered/,
+    );
   });
 });

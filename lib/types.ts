@@ -21,11 +21,7 @@ export type Next = (err?: unknown) => void;
 export type HandlerResult = unknown;
 
 /** Express-compatible middleware. Returning a rejected promise is the same as `next(err)`. */
-export type Middleware = (
-  req: ZonixRequest,
-  res: ZonixResponse,
-  next: Next,
-) => HandlerResult;
+export type Middleware = (req: ZonixRequest, res: ZonixResponse, next: Next) => HandlerResult;
 
 /** Terminal route handler. `next` is accepted so plain `(req, res)` functions stay assignable. */
 export type Handler = (req: ZonixRequest, res: ZonixResponse, next: Next) => HandlerResult;

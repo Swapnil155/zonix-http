@@ -95,7 +95,7 @@ export function toError(thrown: unknown): ZonixError {
 
 function safeStringify(value: unknown): string {
   try {
-    return typeof value === "string" ? value : JSON.stringify(value) ?? String(value);
+    return typeof value === "string" ? value : (JSON.stringify(value) ?? String(value));
   } catch {
     return String(value);
   }

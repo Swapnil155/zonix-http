@@ -29,7 +29,9 @@ describe("router: matching", () => {
     const app = makeApp();
     app.get("/users/:id", echo("user"));
 
-    await request(app.server).get("/users/42").expect(200, { id: "user", params: { id: "42" } });
+    await request(app.server)
+      .get("/users/42")
+      .expect(200, { id: "user", params: { id: "42" } });
   });
 
   test("captures multiple params across depths", async () => {
@@ -57,7 +59,9 @@ describe("router: matching", () => {
     const app = makeApp();
     app.get("/files/*", echo("files"));
 
-    await request(app.server).get("/files").expect(200, { id: "files", params: { "*": "" } });
+    await request(app.server)
+      .get("/files")
+      .expect(200, { id: "files", params: { "*": "" } });
   });
 
   test("methods are isolated: POST /x does not match GET /x", async () => {
@@ -99,7 +103,9 @@ describe("router: priority and backtracking", () => {
     app.get("/users/me", echo("static"));
 
     await request(app.server).get("/users/me").expect(200, { id: "static", params: {} });
-    await request(app.server).get("/users/9").expect(200, { id: "param", params: { id: "9" } });
+    await request(app.server)
+      .get("/users/9")
+      .expect(200, { id: "param", params: { id: "9" } });
   });
 
   test("a param beats a wildcard at the same depth", async () => {
@@ -132,8 +138,12 @@ describe("router: priority and backtracking", () => {
     app.get("/a/:b/c", echo("param-branch"));
     app.get("/a/*", echo("wild"));
 
-    await request(app.server).get("/a/x/c").expect(200, { id: "param-branch", params: { b: "x" } });
-    await request(app.server).get("/a/x/d").expect(200, { id: "wild", params: { "*": "x/d" } });
+    await request(app.server)
+      .get("/a/x/c")
+      .expect(200, { id: "param-branch", params: { b: "x" } });
+    await request(app.server)
+      .get("/a/x/d")
+      .expect(200, { id: "wild", params: { "*": "x/d" } });
   });
 
   test("distinct param names may share a slot across routes", async () => {

@@ -81,16 +81,16 @@ Do not relitigate these mid-build. If one proves wrong, stop, note it in HANDOFF
 ```ts
 import zonix, { parseJSON, serveStatic, cookieParser, cors } from "zonix";
 
-const app = zonix();                       // ZonixOptions later; start with none
+const app = zonix(); // ZonixOptions later; start with none
 
-app.use(parseJSON({ limit: "1mb" }));      // global middleware
+app.use(parseJSON({ limit: "1mb" })); // global middleware
 app.use(cookieParser());
 
 app.route("get", "/users/:id", authMw, async (req, res) => {
   res.status(200).json({ id: req.params.id, q: req.query });
 });
-app.get("/health", h);                     // sugar: get/post/put/patch/delete/head/options
-app.post("/files/*", h);                   // tail wildcard → req.params["*"]
+app.get("/health", h); // sugar: get/post/put/patch/delete/head/options
+app.post("/files/*", h); // tail wildcard → req.params["*"]
 
 app.handleErr((err, req, res) => {
   if (err.clientDisconnect) return;
@@ -99,7 +99,9 @@ app.handleErr((err, req, res) => {
 app.fallback((req, res) => res.status(404).sendFile("./public/404.html"));
 
 const server = app.listen(3000, () => {}); // overloads: (port), (port, host, cb), (options, cb)
-app.address(); app.close(cb); app.server;  // escape hatch to raw http.Server
+app.address();
+app.close(cb);
+app.server; // escape hatch to raw http.Server
 ```
 
 `req` adds: `body`, `params`, `query`, `cookies` (after cookieParser). `res` adds: `status(code)` chainable, `json(data)`, `sendFile(path, mime?)`, `redirect(location, code = 302)`, `attachment(filename?)`. Both otherwise behave as stock `http` objects.

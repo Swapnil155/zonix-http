@@ -90,7 +90,9 @@ describe("request helpers", () => {
 
   test("an absent query yields an empty object", async () => {
     const app = makeApp();
-    app.get("/none", (req, res) => res.json({ query: req.query, empty: Object.keys(req.query).length }));
+    app.get("/none", (req, res) =>
+      res.json({ query: req.query, empty: Object.keys(req.query).length }),
+    );
 
     await request(app.server).get("/none").expect(200, { query: {}, empty: 0 });
   });
