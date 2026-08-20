@@ -1,0 +1,48 @@
+{
+  "name": "zonix",
+  "version": "0.1.0",
+  "description": "Zero-dependency, Express-compatible HTTP framework for Node.js.",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup lib/index.ts --format esm --dts --clean",
+    "test": "node --import tsx --test \"test/**/*.test.ts\"",
+    "typecheck": "tsc --noEmit",
+    "bench": "bash bench/run.sh",
+    "format": "prettier --write \"{lib,test,bench,examples}/**/*.{ts,js}\" \"*.{json,md}\"",
+    "example": "tsx examples/basic.ts"
+  },
+  "keywords": [
+    "http",
+    "framework",
+    "router",
+    "zero-dependency"
+  ],
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/supertest": "^6.0.2",
+    "autocannon": "^8.0.0",
+    "express": "^4.21.2",
+    "fastify": "^5.2.0",
+    "prettier": "^3.4.2",
+    "supertest": "^7.0.0",
+    "tsup": "^8.3.5",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}
