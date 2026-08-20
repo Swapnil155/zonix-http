@@ -7,39 +7,253 @@ export interface RouteMatch {
   handler: Handler;
 }
 
+/** A registered endpoint. `paramNames` is zipped with the values captured during the walk. */
 interface Route {
   middleware: readonly Middleware[];
   handler: Handler;
+  paramNames: readonly string[];
 }
 
 /**
- * Phase 1 router: exact-path lookup, one map per method. Replaced by the radix
- * tree in phase 2 — the `add`/`find` surface is what the rest of the framework
- * depends on and does not change.
+ * One node per path segment.
+ *
+ * Children are split three ways so match priority is a property of the walk
+ * rather than of insertion order: `static` first, then `param`, then `wildcard`.
+ */
+class Node {
+  staticChildren: Map<string, Node> | undefined = undefined;
+  paramChild: Node | undefined = undefined;
+  /** Tail wildcard. Always a leaf: nothing can follow `*`. */
+  wildcardChild: Node | undefined = undefined;
+  route: Route | undefined = undefined;
+}
+
+/** One tree per HTTP method, plus an exact-path map for the fully static routes. */
+interface MethodTree {
+  root: Node;
+  /** Fast path: normalized path -> route, for routes with no params or wildcards. */
+  exact: Map<string, Route>;
+}
+
+/**
+ * Radix router: a segment-keyed tree per HTTP method.
+ *
+ * Matching walks segment by segment, preferring a static child, then the param
+ * child, then a tail wildcard, and **backtracks**: if the static branch dead-ends
+ * deeper in the tree the walk retries the param branch at that same depth.
+ * Captured values ride in a positional array and are zipped with the names stored
+ * on the matched leaf, so `/:id/profile` and `/:username/settings` can legally
+ * share a param slot.
  */
 export class Router {
-  readonly #methods = new Map<string, Map<string, Route>>();
+  readonly #methods = new Map<string, MethodTree>();
 
+  /**
+   * Register a route.
+   *
+   * @throws when the pattern is malformed (bad wildcard, empty or repeated param
+   * name) or when the same method + normalized path is already registered.
+   */
   add(method: string, path: string, middleware: readonly Middleware[], handler: Handler): void {
-    const key = method.toLowerCase();
-    let table = this.#methods.get(key);
-    if (table === undefined) {
-      table = new Map();
-      this.#methods.set(key, table);
+    const segments = splitPath(path);
+    const paramNames: string[] = [];
+
+    let tree = this.#methods.get(method.toLowerCase());
+    if (tree === undefined) {
+      tree = { root: new Node(), exact: new Map() };
+      this.#methods.set(method.toLowerCase(), tree);
     }
-    if (table.has(path)) {
+
+    let node = tree.root;
+    let dynamic = false;
+
+    for (let i = 0; i < segments.length; i++) {
+      const segment = segments[i] as string;
+
+      if (segment.charCodeAt(0) === 58 /* ':' */) {
+        const name = segment.slice(1);
+        if (name.length === 0) {
+          throw frameworkError(
+            `Route "${path}" has an empty param name; write ":id", not ":"`,
+            this.add,
+            ErrorCode.INVALID_ROUTE,
+          );
+        }
+        if (paramNames.includes(name)) {
+          throw frameworkError(
+            `Route "${path}" has a duplicate param name ":${name}"`,
+            this.add,
+            ErrorCode.INVALID_ROUTE,
+          );
+        }
+        paramNames.push(name);
+        dynamic = true;
+        node.paramChild ??= new Node();
+        node = node.paramChild;
+        continue;
+      }
+
+      if (segment.charCodeAt(0) === 42 /* '*' */) {
+        if (segment.length > 1) {
+          throw frameworkError(
+            `Route "${path}": named wildcards are not supported. Use "*" and read req.params["*"]`,
+            this.add,
+            ErrorCode.INVALID_ROUTE,
+          );
+        }
+        if (i !== segments.length - 1) {
+          throw frameworkError(
+            `Route "${path}": "*" is only allowed as the final segment`,
+            this.add,
+            ErrorCode.INVALID_ROUTE,
+          );
+        }
+        paramNames.push("*");
+        dynamic = true;
+        node.wildcardChild ??= new Node();
+        node = node.wildcardChild;
+        continue;
+      }
+
+      node.staticChildren ??= new Map();
+      let child = node.staticChildren.get(segment);
+      if (child === undefined) {
+        child = new Node();
+        node.staticChildren.set(segment, child);
+      }
+      node = child;
+    }
+
+    if (node.route !== undefined) {
       throw frameworkError(
-        `Duplicate route: ${method.toUpperCase()} ${path} is already registered`,
+        `Duplicate route: ${method.toUpperCase()} ${normalize(path)} is already registered`,
         this.add,
         ErrorCode.DUPLICATE_ROUTE,
       );
     }
-    table.set(path, { middleware, handler });
+
+    const route: Route = { middleware, handler, paramNames };
+    node.route = route;
+    if (!dynamic) tree.exact.set(normalize(path), route);
   }
 
+  /**
+   * Find the route for a request path (query string already stripped).
+   *
+   * @throws a 400-tagged framework error when a segment cannot be percent-decoded.
+   */
   find(method: string, path: string): RouteMatch | undefined {
-    const route = this.#methods.get(method.toLowerCase())?.get(path);
+    const tree = this.#methods.get(method.toLowerCase());
+    if (tree === undefined) return undefined;
+
+    // Fast path: no encoding to undo, no trailing slash to trim, fully static route.
+    if (path.indexOf("%") === -1) {
+      const direct = tree.exact.get(path);
+      if (direct !== undefined) {
+        return { params: EMPTY, middleware: direct.middleware, handler: direct.handler };
+      }
+    }
+
+    const segments = splitPath(path);
+    for (let i = 0; i < segments.length; i++) {
+      segments[i] = decodeSegment(segments[i] as string, path);
+    }
+
+    const captured: string[] = [];
+    const route = walk(tree.root, segments, 0, captured);
     if (route === undefined) return undefined;
-    return { params: EMPTY, middleware: route.middleware, handler: route.handler };
+
+    return {
+      params: zip(route.paramNames, captured),
+      middleware: route.middleware,
+      handler: route.handler,
+    };
   }
+}
+
+/**
+ * Depth-first walk with backtracking, in priority order: static, param, wildcard.
+ * Values pushed onto `captured` are popped again when a branch is abandoned, so
+ * the array always mirrors the branch currently being explored.
+ */
+function walk(node: Node, segments: string[], index: number, captured: string[]): Route | undefined {
+  if (index === segments.length) {
+    if (node.route !== undefined) return node.route;
+    // "/files" may still be served by "/files/*" with an empty tail.
+    const wildcard = node.wildcardChild;
+    if (wildcard?.route !== undefined) {
+      captured.push("");
+      return wildcard.route;
+    }
+    return undefined;
+  }
+
+  const segment = segments[index] as string;
+
+  const staticChild = node.staticChildren?.get(segment);
+  if (staticChild !== undefined) {
+    const found = walk(staticChild, segments, index + 1, captured);
+    if (found !== undefined) return found;
+  }
+
+  if (node.paramChild !== undefined) {
+    captured.push(segment);
+    const found = walk(node.paramChild, segments, index + 1, captured);
+    if (found !== undefined) return found;
+    captured.pop();
+  }
+
+  const wildcard = node.wildcardChild;
+  if (wildcard?.route !== undefined) {
+    captured.push(segments.slice(index).join("/"));
+    return wildcard.route;
+  }
+
+  return undefined;
+}
+
+/**
+ * Split into segments, dropping empties. This collapses repeated slashes and
+ * makes the trailing-slash policy fall out for free: `/users` and `/users/`
+ * produce the same segment list, so they are the same route.
+ */
+function splitPath(path: string): string[] {
+  const segments: string[] = [];
+  let start = 1; // every path starts with "/"
+  for (let i = 1; i <= path.length; i++) {
+    if (i === path.length || path.charCodeAt(i) === 47 /* '/' */) {
+      if (i > start) segments.push(path.slice(start, i));
+      start = i + 1;
+    }
+  }
+  return segments;
+}
+
+/** Canonical form used for duplicate detection and the exact-match fast path. */
+function normalize(path: string): string {
+  const segments = splitPath(path);
+  return segments.length === 0 ? "/" : `/${segments.join("/")}`;
+}
+
+function decodeSegment(segment: string, path: string): string {
+  if (segment.indexOf("%") === -1) return segment;
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    throw frameworkError(
+      `Cannot decode path: ${path}`,
+      decodeSegment,
+      ErrorCode.BAD_ENCODING,
+      400,
+    );
+  }
+}
+
+function zip(names: readonly string[], values: readonly string[]): StringMap {
+  if (names.length === 0) return EMPTY;
+  const params: StringMap = {};
+  for (let i = 0; i < names.length; i++) {
+    params[names[i] as string] = values[i] ?? "";
+  }
+  return params;
 }

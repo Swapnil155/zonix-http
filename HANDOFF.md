@@ -1,6 +1,6 @@
 # HANDOFF
 
-**Phase:** 2 — Real router (starting)
+**Phase:** 3 — Response + resilience (starting)
 
 ## Done
 - Phase 0: scaffold — package.json (ESM, zero deps, engines >=20), tsconfig strict + `noUncheckedIndexedAccess`, prettier, git init.
@@ -8,7 +8,10 @@
 - Phase 1: core loop — `ZonixRequest`/`ZonixResponse` subclasses via `createServer({ IncomingMessage, ServerResponse })`,
   flat-Map router (exact paths only), global `use()` chain, `status/json/redirect`, central error dispatch, default 404,
   `listen/close/address/server`, method sugar.
-- 29 tests green (`middleware`, `errors`, `response`). `examples/basic.ts` runs and was smoke-tested over curl.
+- Phase 2: radix router — segment-keyed tree per method, params, tail wildcard, static > param > wildcard with
+  backtracking, trailing-slash + repeated-slash normalization, per-segment decode (malformed -> 400), duplicate and
+  bad-pattern detection, `fallback()`. Exact-path `Map` fast path for fully static routes.
+- 62 tests green (`router`, `middleware`, `errors`, `response`). `examples/basic.ts` runs; params verified over curl.
 
 ## Deviations from CLAUDE.md (accepted, note if wrong)
 - Handler/Middleware return type is `unknown`, not `void | Promise<void>`: the union breaks TS's void-return
@@ -18,11 +21,13 @@
 - Default error responder honours `err.status` for 4xx (needed for malformed-encoding → 400); 5xx still returns the
   generic `Internal Server Error` with no message or stack.
 - Added `req.path` (pathname, undecoded) — needed internally by routing/serveStatic, matches Express.
+- Router extras beyond the spec: `/files/*` also matches `/files` (captures `""`), repeated slashes collapse, and
+  duplicate param names in one pattern throw. HEAD does **not** fall back to GET routes (keeps method isolation
+  as specified) — listed as roadmap instead.
 
 ## Next
-Replace the flat Map in `lib/router.ts` with the radix tree (decisions 2 + 3): params, tail wildcard,
-static > param > wildcard with backtracking, trailing-slash normalization, per-segment decode → 400,
-duplicate detection, then `fallback()` coverage. Write `test/router.test.ts` first.
+Phase 3: `res.sendFile()` (stat → MIME from `lib/internal/mimeTypes.ts` → `pipeline()`), `res.attachment()`,
+client-disconnect handling per decision 6, and `test/disconnect.test.ts` with an `unhandledRejection` trap.
 
 ## Blockers / open questions
 None.
