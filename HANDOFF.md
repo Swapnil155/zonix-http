@@ -3,11 +3,11 @@
 **Phase:** 7 — OPEN. Negotiator landed and wired; tests green. Next: ETag/fresh
 → 304, range/206, compression, serveStatic cache (the W1/M1 stack).
 
-## Done this session (2026-08-22 � Fastify source audit)
+## Done this session (2026-08-22 — Fastify source audit)
 
 `fastify@5.12.1` + `find-my-way@9.8.0` pinned exact; hot paths read. 14-row
 diff table in `bench/results.md` "Fastify source audit 2026-08-22". Verdict:
-one real gap � `req.params` was `Object.create(null)` (V8 dictionary mode);
+one real gap — `req.params` was `Object.create(null)` (V8 dictionary mode);
 now a plain object + registration guard on `:__proto__/:constructor/:prototype`
 (3 tests, 463/463). Direct microbench 1.9-2.4x build / 1.4x read; e2e param
 +0.47% (6/7 pairs), hello gate -0.15% PASS. Declined with measured ceilings:
@@ -16,7 +16,7 @@ server timeout defaults (no mechanism; keeps slowloris posture). Codegen items
 (prefix matcher, params factory) BANNED-decision-11. Nothing reverted.
 Security note for the hardening checklist: zonix has no `maxParamLength`.
 
-## Done earlier (2026-08-22 � full fresh matrix, container-official)
+## Done earlier (2026-08-22 — full fresh matrix, container-official)
 
 `bench/matrix.mjs` (new): all 8 scenarios x 3 frameworks, rotating order, 5-8
 rounds, per-scenario status assertion, regime pre+post, per-round Fastify values
