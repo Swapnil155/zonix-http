@@ -1199,3 +1199,84 @@ node v22.20.0 · container cpus=8 · image node:22.20.0-bookworm-slim · repo co
   0.90–0.98× Fastify on the micro JSON scenarios (hello/6-param/chain/404/echo),
   5.5–6.3× Express; **1.35× Fastify at 200 routes; 1.46× Fastify and 1.79×
   Express on file-1kb.** Footprint table (M3) unchanged.
+
+---
+
+# Fastify source audit 2026-08-22 — perf techniques they use that zonix lacks
+
+_Pinned for the audit: `fastify@5.12.1`, `find-my-way@9.8.0` (exact devDeps).
+Hot path read: `lib/route.js` `routeHandler`, `lib/handle-request.js`,
+`lib/reply.js` (`send` → `onSendHook` → `onSendEnd` → `writeHead`/`end`),
+`lib/request.js` constructor, `lib/server.js` + `config-validator.js`
+defaults, `lib/content-type.js` / `content-type-parser.js` caches,
+find-my-way `find()` + `lib/node.js`. Decision 11 (no codegen), D1 and D7 in
+force; rule 5 tiering for the verdicts. Noise floor this host ~5% e2e._
+
+## Diff table
+
+| #   | technique                                                         | fastify does                                                                                                                                                                | zonix status                                                                                                                                                                                                                             | expected effect                                                                                                                                                                                                                                                                            |
+| --- | ----------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 1   | Single-pass header write                                          | `res.writeHead(status, headersObj)` then `res.end(payload)`                                                                                                                 | **MATCHED** (D3 batching; header self-time 3.90% → 1.79%)                                                                                                                                                                                | —                                                                                                                                                                                                                                                                                          |
+| 2   | Precomputed hook/handler chains, null-checked                     | `context.onRequest === null` etc., arrays built at route registration                                                                                                       | **MATCHED** (precomposed per-route pipeline, +5.04%)                                                                                                                                                                                     | —                                                                                                                                                                                                                                                                                          |
+| 3   | Sync completion, no promise when not needed                       | `wrapThenable` only when handler returns a thenable                                                                                                                         | **MATCHED** (item 6, +6.46%)                                                                                                                                                                                                             | —                                                                                                                                                                                                                                                                                          |
+| 4   | Monomorphic request/reply shapes                                  | `Request`/`Reply` constructors assign every field                                                                                                                           | **MATCHED** — and zonix goes further: subclasses of `IncomingMessage`/`ServerResponse`, so there is **no wrapper object at all**; Fastify allocates two per request on top of Node's                                                     | zonix ahead                                                                                                                                                                                                                                                                                |
+| 5   | Query-string parsing                                              | **eager** — `querystringParser` runs inside `find()` on every request (`fast-querystring`)                                                                                  | zonix **lazy** (`req.query` getter, decision 1)                                                                                                                                                                                          | zonix ahead                                                                                                                                                                                                                                                                                |
+| 6   | Static-route shortcut                                             | none — every lookup walks the prefix tree (`_treeGET` field for GET)                                                                                                        | zonix has an exact-path `Map` before the walk (item 2)                                                                                                                                                                                   | zonix ahead                                                                                                                                                                                                                                                                                |
+| 7   | GET tree reached through a dedicated field instead of a map       | `method === 'GET' ? this._treeGET : this.trees[method]`                                                                                                                     | **ABSENT** — zonix `Map.get(method)`                                                                                                                                                                                                     | proxy microbench: 5.2 ns vs 2.6 ns → **~3 ns/request, ≈0.03%.** Not implemented; unmeasurable at every tier                                                                                                                                                                                |
+| 8   | In-place static prefix match (no segment slice)                   | `findStaticMatchingChild` compares char codes against child prefixes; **prefix matcher built with `new Function`** (`_compilePrefixMatch`)                                  | codegen half **BANNED-decision-11**; the non-codegen half (char-code arrays instead of `Map.get(path.slice())`) is **ABSENT**                                                                                                            | proxy microbench, 3 static segments: 56 ns vs 10 ns → **ceiling ~46 ns/request ≈ 0.4%** on the deepest param path, 0 on static routes (exact map). Not implemented: ~80 lines of tree restructuring for a ceiling below e2e resolution; revisit only with a microbench that can resolve it |
+| 9   | Params object creation                                            | `_compileCreateParamsObject` — **codegen** builds a literal with fixed keys per route                                                                                       | codegen **BANNED-decision-11**; but the _shape_ half was **ABSENT**: zonix built params with `Object.create(null)`, which V8 creates in **dictionary mode**                                                                              | direct microbench: build 14.9 → 7.8 ns (1 param), 79 → 33 ns (4 params); read `p.id` 5.3 → 3.8 ns. **IMPLEMENTED, KEPT** (below)                                                                                                                                                           |
+| 10  | Content-type parse cache                                          | `ContentType.from()` LRU(100) on `reply.send`; `ContentTypeParser` FIFO(100) on request                                                                                     | **MATCHED by construction** — `res.json` writes a constant header and parses nothing; `req.is()`/body parsers parse on demand only                                                                                                       | —                                                                                                                                                                                                                                                                                          |
+| 11  | `res.end(payload, null, null)` "avoid ArgumentsAdaptorTrampoline" | yes                                                                                                                                                                         | not done — the adaptor frame was removed in V8 8.9 (Node ≥ 16); the trick is obsolete on every supported Node                                                                                                                            | none                                                                                                                                                                                                                                                                                       |
+| 12  | Server/socket defaults                                            | `keepAliveTimeout` 72 000 (Node: 5 000), `requestTimeout` 0 (Node: 300 000), `connectionTimeout` 0, `maxRequestsPerSocket` 0, no explicit `noDelay` (Node's default `true`) | **DIFFERENT, not a perf technique** — both timers are armed per connection, not per request; no throughput mechanism under keep-alive. zonix keeps Node's `requestTimeout` (slowloris posture, hardening checklist); Fastify disables it | none; **no change**                                                                                                                                                                                                                                                                        |
+| 13  | Per-request logger child, request id                              | skipped entirely when `logger: false` (`childLogger = logger`)                                                                                                              | zonix has no logger (non-goal)                                                                                                                                                                                                           | —                                                                                                                                                                                                                                                                                          |
+| 14  | `maxParamLength` 100 guard in the walk                            | yes                                                                                                                                                                         | **ABSENT — security posture, not perf** (bounded only by Node's 16 KB header limit); noted for the hardening checklist, out of this session's scope                                                                                      | —                                                                                                                                                                                                                                                                                          |
+
+**Verdict: one gap with a measurable mechanism (#9), two with measured
+ceilings below resolution (#7, #8), the rest matched or zonix ahead.** Their
+homework is done and so is ours; the residual is the shared `node:http`
+ceiling, exactly as the Beat-Fastify arithmetic said.
+
+## Kept
+
+**#9 — `req.params` is now a plain fast-shape object** (`lib/router/radix.ts`
+`zip`). Zero complexity: one line changed, plus a registration-time guard that
+rejects `:__proto__`, `:constructor` and `:prototype` as param names (the keys
+come from developer route patterns, never from the request, so the guard is
+the whole pollution story). Three tests added (shape, guard, a literal
+`/__proto__/:id` segment still routes and pollutes nothing); 463/463 green.
+
+Measurements, rule-5 tiers:
+
+- direct-op microbench (the instrument that resolves it): **1.9–2.4× faster to
+  build, 1.4× faster to read** (numbers in the table).
+- router microbench (`micro-ab.mjs`, 7 and 11 pairs): param cases +3 to +5%,
+  but the instrument's own noise band was ±25–45% on cases that never call
+  `zip` (static routes) — **cannot adjudicate at this level**; recorded, not
+  claimed.
+- paired e2e, `param` scenario, 7 pairs: **+0.47% median, 6/7 positive, range
+  −0.3..+1.6%** — sub-noise, the predicted magnitude (tens of ns on an 11 µs
+  request).
+- paired e2e, `hello` (the regression gate): **−0.15% median of paired deltas
+  (88,851 → 88,672; range −3.3..+1.6%)** — gate ≤2% **PASS**; hello never
+  builds a params object.
+
+Kept on the same basis as item 4 of Phase 5.5: it deletes a per-request cost
+with zero added complexity and the direct microbench distinguishes it from
+zero unambiguously. The e2e instruments cannot see it and are not claimed to.
+
+## Measured and declined
+
+- **#8 in-place static matching:** ceiling 46 ns/request on the deepest bench
+  path (≈0.4%), nothing on static routes. ~80 lines for that; below the
+  complexity budget at this resolution. Codegen half banned regardless.
+- **#7 GET-tree field:** ceiling 3 ns/request. Nothing.
+- **#12 server timeout defaults:** no throughput mechanism; changing them would
+  trade the slowloris posture for nothing.
+
+## Reverted
+
+Nothing — no change was attempted that did not survive.
+
+_Host e2e absolutes above (~88k) are this host's Claude-Code execution context
+on the day; ratios and paired deltas only. Baseline frozen with
+`bench/snapshot.mjs` from `65f2d8e` before any edit._

@@ -58,6 +58,15 @@ export class Router {
             ErrorCode.INVALID_ROUTE,
           );
         }
+        if (name === "__proto__" || name === "constructor" || name === "prototype") {
+          // req.params is a plain object (see radix.ts zip); these names are
+          // the only way a route pattern could reach its prototype chain.
+          throw frameworkError(
+            `Route "${path}": ":${name}" is not an allowed param name`,
+            this.add,
+            ErrorCode.INVALID_ROUTE,
+          );
+        }
         if (paramNames.includes(name)) {
           throw frameworkError(
             `Route "${path}" has a duplicate param name ":${name}"`,

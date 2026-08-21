@@ -292,3 +292,38 @@ describe("router: fallback", () => {
     assert.throws(() => app.fallback((_req, res) => res.status(404).end()), /already registered/);
   });
 });
+
+describe("router: params object shape", () => {
+  test("params is a plain fast-shape object carrying only the captured keys", async () => {
+    const app = makeApp();
+    app.get("/users/:id/posts/:post", (req, res) => {
+      const p = req.params;
+      res.status(200).json({
+        own: Object.keys(p),
+        hasOwnProto: Object.prototype.hasOwnProperty.call(p, "__proto__"),
+        id: p.id,
+        post: p.post,
+      });
+    });
+    await request(app.server)
+      .get("/users/7/posts/9")
+      .expect(200, { own: ["id", "post"], hasOwnProto: false, id: "7", post: "9" });
+  });
+
+  test("prototype-reaching param names are rejected at registration", () => {
+    const app = makeApp();
+    for (const name of ["__proto__", "constructor", "prototype"]) {
+      assert.throws(() => app.get(`/x/:${name}`, echo("x")), /not an allowed param name/);
+    }
+    assert.throws(() => app.get("/y/:a/:constructor", echo("y")), /not an allowed param name/);
+  });
+
+  test("a literal path segment named like a prototype key still routes statically", async () => {
+    const app = makeApp();
+    app.get("/__proto__/:id", echo("proto-static"));
+    await request(app.server)
+      .get("/__proto__/3")
+      .expect(200, { id: "proto-static", params: { id: "3" } });
+    assert.equal(({} as Record<string, unknown>).polluted, undefined);
+  });
+});

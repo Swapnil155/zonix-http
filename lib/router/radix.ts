@@ -138,9 +138,19 @@ export function walkPath(
   return undefined;
 }
 
+/**
+ * Build `req.params` from the leaf's names and the values captured on the walk.
+ *
+ * A plain object, deliberately: V8 creates `Object.create(null)` objects in
+ * dictionary mode, which measured 2-2.5x slower to build and ~40% slower to
+ * read than a fast-shape literal (bench/results.md, Fastify source audit).
+ * Pollution safety comes from the keys, not the prototype: param names are
+ * developer-written route patterns, and the three dangerous names are rejected
+ * at registration.
+ */
 export function zip(names: readonly string[], values: readonly string[]): StringMap {
   if (names.length === 0) return EMPTY;
-  const params: StringMap = Object.create(null) as StringMap;
+  const params: StringMap = {};
   for (let i = 0; i < names.length; i++) {
     params[names[i] as string] = values[i] ?? "";
   }
