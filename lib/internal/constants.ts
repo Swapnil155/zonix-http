@@ -20,3 +20,34 @@ export const EMPTY: Readonly<Record<string, string>> = Object.freeze(
  * no closure. Performance rule 1, applied literally.
  */
 export const kSettings = Symbol("zonix.settings");
+
+/**
+ * The shape stored under {@link kSettings}.
+ *
+ * Declared structurally rather than imported so this module keeps its "imports
+ * nothing" property at runtime; `types.ts` re-exports the public alias.
+ */
+export interface AppSettings {
+  trust: (address: string | undefined, hop: number) => boolean;
+  subdomainOffset: number;
+  /** Secret for signed cookies. Signing throws when it is absent. */
+  cookieSecret?: string | undefined;
+}
+
+/** Settings for a request that cannot reach its app (detached socket, unit test). */
+export const DEFAULT_SETTINGS: AppSettings = Object.freeze({
+  trust: () => false,
+  subdomainOffset: 2,
+  cookieSecret: undefined,
+});
+
+/**
+ * Resolve an app's settings from a socket.
+ *
+ * Requests and responses both reach the app this way — through
+ * `socket.server` — so that nothing has to be attached per request.
+ */
+export function settingsOf(socket: unknown): AppSettings {
+  const server = (socket as { server?: Record<symbol, AppSettings | undefined> } | null)?.server;
+  return server?.[kSettings] ?? DEFAULT_SETTINGS;
+}

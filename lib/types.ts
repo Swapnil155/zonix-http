@@ -55,6 +55,12 @@ export interface ZonixOptions {
    * Defaults to 2, so `a.b.example.com` has subdomains `["b", "a"]`.
    */
   subdomainOffset?: number;
+  /**
+   * Secret used to sign cookies (`res.cookie(..., { signed: true })`) and to
+   * verify them on the way back in. Without it, signing throws rather than
+   * silently emitting an unsigned cookie.
+   */
+  cookieSecret?: string;
 }
 
 /** `(address, hopIndex) => isTrusted`. */
@@ -66,4 +72,6 @@ export type TrustProxyOption = boolean | number | string | readonly string[] | T
 export interface ZonixSettings {
   trust: TrustPredicate;
   subdomainOffset: number;
+  /** Secret for signed cookies; signing throws when it is absent. */
+  cookieSecret?: string | undefined;
 }

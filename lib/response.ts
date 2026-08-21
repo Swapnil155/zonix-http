@@ -1,7 +1,21 @@
 import { createReadStream, readFile as readFileCb, stat as statCb, type Stats } from "node:fs";
-import { ServerResponse } from "node:http";
+import { STATUS_CODES, ServerResponse } from "node:http";
 import { pipeline } from "node:stream/promises";
+import {
+  appendValue,
+  assertHeaderValue,
+  contentTypeFor,
+  encodeUrl,
+  formatLinks,
+  inferSendType,
+  isBodyless,
+  varyValue,
+  withCharset,
+} from "./compat/response.js";
+import { serializeCookie, type CookieOptions } from "./cookies/serialize.js";
+import { markSigned, sign } from "./cookies/sign.js";
 import { ErrorCode, frameworkError, wasDispatched } from "./errors/index.js";
+import { settingsOf } from "./internal/constants.js";
 import { contentDisposition } from "./http/content-disposition.js";
 import { DEFAULT_MIME, lookupMime } from "./http/mime.js";
 import type { ZonixRequest } from "./request.js";
@@ -23,6 +37,9 @@ type ErrorSink = (err: unknown) => void;
 const BUFFERED_MAX_BYTES = 32 * 1024;
 
 const JSON_CONTENT_TYPE = "application/json; charset=utf-8";
+
+/** Standard reason phrases, from node:http rather than a status-codes package. */
+const STATUS_MESSAGES: Readonly<Record<number, string>> = STATUS_CODES as Record<number, string>;
 
 /**
  * Callback `fs` wrapped in one plain promise each, rather than `node:fs/promises`.
@@ -54,6 +71,7 @@ function readFileAsync(path: string): Promise<Buffer> {
  */
 export class ZonixResponse extends ServerResponse<ZonixRequest> {
   #sink: ErrorSink | undefined = undefined;
+  #locals: Record<string, unknown> | undefined = undefined;
 
   /**
    * @internal Wire this response to the app's central error dispatch. Called by
@@ -98,20 +116,240 @@ export class ZonixResponse extends ServerResponse<ZonixRequest> {
     this.end(body);
   }
 
-  /** Send a `Location` redirect. Defaults to 302 Found. */
+  /**
+   * Send a `Location` redirect. Defaults to 302 Found.
+   *
+   * The location is URL-encoded, so a newline in a user-supplied redirect
+   * target becomes `%0A` rather than splitting the response.
+   */
   redirect(location: string, code = 302): void {
     this.#assertOpen(this.redirect);
-    if (typeof location !== "string" || location.length === 0) {
+    this.location(location);
+    this.statusCode = code;
+    this.setHeader("Content-Length", 0);
+    this.end();
+  }
+
+  // --- Express compat surface ------------------------------------------------
+
+  /**
+   * Set a response header, or several at once with an object.
+   *
+   * A `Content-Type` without a charset gains `; charset=utf-8` where that is
+   * correct, matching Express.
+   */
+  set(
+    field: string | Readonly<Record<string, string | readonly string[]>>,
+    value?: string | readonly string[],
+  ): this {
+    if (typeof field === "object") {
+      for (const [key, val] of Object.entries(field)) this.set(key, val);
+      return this;
+    }
+    if (typeof field !== "string" || field.length === 0) {
       throw frameworkError(
-        "res.redirect() requires a non-empty location string",
-        this.redirect,
+        "res.set() requires a header name",
+        this.set,
         ErrorCode.INVALID_ARGUMENT,
       );
     }
-    this.statusCode = code;
-    this.setHeader("Location", location);
-    this.setHeader("Content-Length", 0);
-    this.end();
+
+    if (Array.isArray(value)) {
+      const values = value.map(String);
+      for (const item of values) assertHeaderValue(field, item, this.set);
+      this.setHeader(field, values);
+      return this;
+    }
+
+    let out = String(value);
+    assertHeaderValue(field, out, this.set);
+    if (field.toLowerCase() === "content-type") out = withCharset(out);
+    this.setHeader(field, out);
+    return this;
+  }
+
+  /** Alias of `set()`. */
+  header(
+    field: string | Readonly<Record<string, string | readonly string[]>>,
+    value?: string | readonly string[],
+  ): this {
+    return this.set(field, value);
+  }
+
+  /** Read a header already set on this response. */
+  get(field: string): string | number | string[] | undefined {
+    return this.getHeader(field);
+  }
+
+  /** Append to a header, keeping any existing value. */
+  append(field: string, value: string | readonly string[]): this {
+    const merged = appendValue(this.getHeader(field), value);
+    return this.set(field, merged);
+  }
+
+  /**
+   * Set `Content-Type` from a full type, an extension, or a filename.
+   *
+   * An unknown extension throws rather than writing the string `"false"` into
+   * the header, which is what Express does.
+   */
+  type(value: string): this {
+    this.setHeader("Content-Type", contentTypeFor(value, this.type));
+    return this;
+  }
+
+  /** Alias of `type()`. */
+  contentType(value: string): this {
+    return this.type(value);
+  }
+
+  /** Add fields to `Vary`, deduplicated; `*` absorbs everything. */
+  vary(field: string | readonly string[]): this {
+    const fields = Array.isArray(field) ? field : [field as string];
+    this.setHeader("Vary", varyValue(this.getHeader("Vary"), fields));
+    return this;
+  }
+
+  /** Add `Link` relations. */
+  links(links: Readonly<Record<string, string>>): this {
+    const value = formatLinks(this.getHeader("Link"), links);
+    assertHeaderValue("Link", value, this.links);
+    this.setHeader("Link", value);
+    return this;
+  }
+
+  /**
+   * Set `Location`, URL-encoding it.
+   *
+   * `"back"` resolves to the `Referer` header, or `/` when there is none.
+   */
+  location(url: string): this {
+    if (typeof url !== "string" || url.length === 0) {
+      throw frameworkError(
+        "res.location() requires a non-empty URL",
+        this.location,
+        ErrorCode.INVALID_ARGUMENT,
+      );
+    }
+    let target = url;
+    if (target === "back") {
+      const referrer = this.req.get("referrer");
+      target = typeof referrer === "string" && referrer.length > 0 ? referrer : "/";
+    }
+    this.setHeader("Location", encodeUrl(target));
+    return this;
+  }
+
+  /**
+   * Per-response data, for middleware to pass values to a handler or view.
+   *
+   * Created on first touch (performance rule 1) and null-prototype, so a key
+   * like `__proto__` is inert.
+   */
+  get locals(): Record<string, unknown> {
+    return (this.#locals ??= Object.create(null) as Record<string, unknown>);
+  }
+
+  set locals(value: Record<string, unknown>) {
+    this.#locals = value;
+  }
+
+  /** Send the status code with its standard message as the body. */
+  sendStatus(code: number): void {
+    this.status(code);
+    this.setHeader("Content-Type", "text/plain; charset=utf-8");
+    this.send(STATUS_MESSAGES[code] ?? String(code));
+  }
+
+  /**
+   * Send a body, inferring `Content-Type` (decision 13).
+   *
+   * A number throws: `res.send(404)` reads like a status but Express sends the
+   * body `404`. The error points at `sendStatus`.
+   */
+  send(body?: unknown): void {
+    this.#assertOpen(this.send);
+    if (body === undefined) {
+      this.#finish(undefined);
+      return;
+    }
+
+    const plan = inferSendType(body, this.hasHeader("Content-Type"), this.send);
+    if (plan.kind === "json") {
+      this.json(plan.value);
+      return;
+    }
+    if (plan.type !== undefined) this.setHeader("Content-Type", plan.type);
+    this.#finish(plan.kind === "buffer" ? plan.value : Buffer.from(plan.value, "utf8"));
+  }
+
+  /** Set a cookie. Signing requires `cookieSecret` on the app. */
+  cookie(name: string, value: unknown, options: CookieOptions = {}): this {
+    const opts: CookieOptions = { ...options };
+
+    // Objects travel as Express's "j:" JSON form so cookieParser can revive them.
+    let raw =
+      typeof value === "object" && value !== null ? `j:${JSON.stringify(value)}` : String(value);
+
+    if (opts.signed === true) {
+      const secret = settingsOf(this.req.socket).cookieSecret;
+      if (secret === undefined || secret.length === 0) {
+        throw frameworkError(
+          'Signed cookies need a secret: zonix({ cookieSecret: "..." })',
+          this.cookie,
+          ErrorCode.INVALID_ARGUMENT,
+        );
+      }
+      raw = markSigned(sign(raw, secret));
+    }
+    delete opts.signed;
+
+    // maxAge is milliseconds in the API and seconds on the wire; it also sets
+    // Expires so that clients without Max-Age support still expire the cookie.
+    if (opts.maxAge !== undefined && opts.maxAge !== null && Number.isFinite(opts.maxAge)) {
+      const ms = opts.maxAge;
+      opts.expires = new Date(Date.now() + ms);
+      opts.maxAge = Math.floor(ms / 1000);
+    }
+    if (opts.path === undefined) opts.path = "/";
+
+    this.append("Set-Cookie", serializeCookie(name, raw, opts));
+    return this;
+  }
+
+  /**
+   * Expire a cookie.
+   *
+   * `path` and `domain` must match the cookie that was set, or the browser
+   * stores a second cookie and keeps the original. The expiry is applied
+   * **after** the caller's options, so — unlike Express 4 — passing `maxAge`
+   * cannot accidentally turn a clear into a renewal.
+   */
+  clearCookie(name: string, options: CookieOptions = {}): this {
+    const opts: CookieOptions = { path: "/", ...options };
+    delete opts.maxAge;
+    opts.expires = new Date(1);
+    return this.cookie(name, "", opts);
+  }
+
+  /** Shared tail for `send`: sets Content-Length and strips bodyless headers. */
+  #finish(body: Buffer | undefined): void {
+    if (isBodyless(this.statusCode)) {
+      this.removeHeader("Content-Type");
+      this.removeHeader("Content-Length");
+      this.removeHeader("Transfer-Encoding");
+      this.end();
+      return;
+    }
+    if (body === undefined) {
+      this.end();
+      return;
+    }
+    this.setHeader("Content-Length", body.byteLength);
+    // Node drops the body for HEAD itself, but ending explicitly keeps the
+    // wire output identical either way.
+    if (this.req.method === "HEAD") this.end();
+    else this.end(body);
   }
 
   /**

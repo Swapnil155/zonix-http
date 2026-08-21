@@ -42,6 +42,7 @@ export class Zonix {
     const settings: ZonixSettings = {
       trust: compileTrust(options.trustProxy),
       subdomainOffset: options.subdomainOffset ?? 2,
+      cookieSecret: options.cookieSecret,
     };
     this.server = http.createServer(
       { IncomingMessage: ZonixRequest, ServerResponse: ZonixResponse },

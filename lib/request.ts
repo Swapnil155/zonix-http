@@ -10,7 +10,7 @@ import {
   isXhr,
   typeIs,
 } from "./compat/request.js";
-import { EMPTY, kSettings } from "./internal/constants.js";
+import { EMPTY, settingsOf } from "./internal/constants.js";
 import { parseQuery } from "./query/simple.js";
 import type { StringMap, ZonixSettings } from "./types.js";
 
@@ -24,12 +24,6 @@ interface CompatCache {
   ip?: string | undefined;
   ips?: string[];
 }
-
-/** Used when a request cannot reach its app (a detached socket, or a bare unit test). */
-const DEFAULT_SETTINGS: ZonixSettings = Object.freeze({
-  trust: () => false,
-  subdomainOffset: 2,
-});
 
 /**
  * The request object handed to every middleware and handler.
@@ -213,7 +207,6 @@ export class ZonixRequest extends IncomingMessage {
 
   /** The app's compiled settings, reached through the server this socket belongs to. */
   #settings(): ZonixSettings {
-    const socket = this.socket as { server?: Record<symbol, ZonixSettings | undefined> } | null;
-    return socket?.server?.[kSettings] ?? DEFAULT_SETTINGS;
+    return settingsOf(this.socket);
   }
 }
