@@ -15,10 +15,10 @@ import {
 } from "./compat/response.js";
 import { serializeCookie, type CookieOptions } from "./cookies/serialize.js";
 import { markSigned, sign } from "./cookies/sign.js";
-import { ErrorCode, frameworkError, wasDispatched } from "./errors/index.js";
+import { ErrorCode, frameworkError, wasDispatched, type ZonixError } from "./errors/index.js";
 import { settingsOf } from "./internal/constants.js";
 import { contentDisposition } from "./http/content-disposition.js";
-import { DEFAULT_MIME, lookupMime } from "./http/mime.js";
+import { DEFAULT_MIME, lookupMime, resolveType } from "./http/mime.js";
 import type { ZonixRequest } from "./request.js";
 
 /** Where an error raised outside the middleware chain is sent. Wired by `Zonix`. */
@@ -233,6 +233,44 @@ export class ZonixResponse extends ServerResponse<ZonixRequest> {
   vary(field: string | readonly string[]): this {
     const fields = Array.isArray(field) ? field : [field as string];
     this.setHeader("Vary", varyValue(this.getHeader("Vary"), fields));
+    return this;
+  }
+
+  /**
+   * Respond with whichever representation the client prefers.
+   *
+   * Keys are full types or extensions; `default` is the fallback. The chosen
+   * key sets `Content-Type` (charset added as `set()` does) and `Vary: Accept`
+   * is always added, because the response now depends on that header. With
+   * nothing acceptable and no `default`, a 406 carrying `types` goes to the
+   * central error dispatch - Express's `next(createError(406))`, minus the
+   * `next` plumbing zonix does not expose.
+   *
+   * Negotiation is the pinned negotiator port, via `req.accepts`.
+   */
+  format(handlers: Readonly<Record<string, (req: ZonixRequest, res: this) => unknown>>): this {
+    const keys = Object.keys(handlers).filter((k) => k !== "default");
+    const key = keys.length > 0 ? this.req.accepts(keys) : false;
+    this.vary("Accept");
+
+    if (key !== false) {
+      this.set("Content-Type", normalizeFormatKey(key));
+      (handlers[key] as (req: ZonixRequest, res: this) => unknown)(this.req, this);
+      return this;
+    }
+    const fallback = handlers["default"];
+    if (fallback !== undefined) {
+      fallback(this.req, this);
+      return this;
+    }
+    const err = frameworkError(
+      "Not Acceptable",
+      this.format,
+      ErrorCode.NOT_ACCEPTABLE,
+      406,
+    ) as ZonixError & { types?: string[] };
+    err.types = keys.map(normalizeFormatKey);
+    this.#sink?.(err);
     return this;
   }
 
@@ -525,4 +563,16 @@ export class ZonixResponse extends ServerResponse<ZonixRequest> {
       );
     }
   }
+}
+
+/**
+ * Express's `normalizeType(key).value`: an extension resolves through the MIME
+ * table; a full type keeps only its `type/subtype` (parameters dropped).
+ */
+function normalizeFormatKey(key: string): string {
+  if (key.includes("/")) {
+    const semi = key.indexOf(";");
+    return (semi === -1 ? key : key.slice(0, semi)).trim();
+  }
+  return resolveType(key) ?? DEFAULT_MIME;
 }

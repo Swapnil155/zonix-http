@@ -237,6 +237,52 @@ export function registerDocsRoutes(app: DocsApp, bodyParser: any): void {
   app.post("/echo", (req: any, res: any) => {
     res.json(req.body);
   });
+
+  // --- expressjs.com/en/5x/api.html#req.accepts ---------------------------
+  app.get("/accepts", (req: any, res: any) => {
+    res.json({
+      html: req.accepts("html"),
+      htmlOrJson: req.accepts(["html", "json"]),
+      spread: req.accepts("text/html", "application/json"),
+      list: req.accepts(),
+      encodings: req.acceptsEncodings(["gzip", "deflate"]),
+      encodingList: req.acceptsEncodings(),
+      charsets: req.acceptsCharsets("utf-8", "iso-8859-1"),
+      languages: req.acceptsLanguages("en", "es", "fr"),
+      languageList: req.acceptsLanguages(),
+    });
+  });
+
+  // --- expressjs.com/en/5x/api.html#res.format ----------------------------
+  app.get("/format/full", (req: any, res: any) => {
+    res.format({
+      "text/plain": function () {
+        res.send("hey");
+      },
+      "text/html": function () {
+        res.send("<p>hey</p>");
+      },
+      "application/json": function () {
+        res.send({ message: "hey" });
+      },
+      default: function () {
+        res.status(406).send("Not Acceptable");
+      },
+    });
+  });
+  app.get("/format/short", (req: any, res: any) => {
+    res.format({
+      text: function () {
+        res.send("hey");
+      },
+      html: function () {
+        res.send("<p>hey</p>");
+      },
+      json: function () {
+        res.send({ message: "hey" });
+      },
+    });
+  });
 }
 
 /** Every route above, as a replayable request. */
@@ -293,4 +339,47 @@ export const DOCS_REQUESTS: DocsRequest[] = [
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ title: "tobi", tags: ["a", "b"] }),
   },
+  {
+    name: "req.accepts family, browser-like headers",
+    method: "GET",
+    path: "/accepts",
+    headers: {
+      Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      "Accept-Encoding": "gzip, deflate, br",
+      "Accept-Charset": "iso-8859-1;q=0.5, utf-8",
+      "Accept-Language": "fr-CA, fr;q=0.8, en-US;q=0.6, en;q=0.4",
+    },
+  },
+  {
+    name: "req.accepts family, JSON client",
+    method: "GET",
+    path: "/accepts",
+    headers: { Accept: "application/json", "Accept-Encoding": "identity;q=0, gzip" },
+  },
+  { name: "req.accepts family, no headers at all", method: "GET", path: "/accepts" },
+  {
+    name: "res.format picks json",
+    method: "GET",
+    path: "/format/full",
+    headers: { Accept: "application/json" },
+  },
+  {
+    name: "res.format picks html via */*",
+    method: "GET",
+    path: "/format/full",
+    headers: { Accept: "*/*" },
+  },
+  {
+    name: "res.format falls to default",
+    method: "GET",
+    path: "/format/full",
+    headers: { Accept: "image/png" },
+  },
+  {
+    name: "res.format short keys pick text",
+    method: "GET",
+    path: "/format/short",
+    headers: { Accept: "text/plain;q=0.9, text/html;q=0.5" },
+  },
+  { name: "res.format short keys, no Accept", method: "GET", path: "/format/short" },
 ];

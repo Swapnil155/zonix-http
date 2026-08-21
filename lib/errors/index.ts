@@ -38,6 +38,8 @@ export const ErrorCode = {
   PAYLOAD_TOO_LARGE: "ERR_ZONIX_PAYLOAD_TOO_LARGE",
   /** Static path escaped the served root. */
   FORBIDDEN_PATH: "ERR_ZONIX_FORBIDDEN_PATH",
+  /** `res.format` found no acceptable representation (HTTP 406). */
+  NOT_ACCEPTABLE: "ERR_ZONIX_NOT_ACCEPTABLE",
 } as const;
 
 export type ErrorCodeValue = (typeof ErrorCode)[keyof typeof ErrorCode];

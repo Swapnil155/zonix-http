@@ -1085,3 +1085,30 @@ at both sizes (1.36× at 6 routes vs common-mode Fastify, 1.34× at 200);
 on the host the 6-route comparison met fast-mode Fastify (0.97×). Same
 build, different mode availability — another reason absolutes are never the
 claim.
+
+---
+
+# Session 14 — fast-mode frequency sampling (container, ROUNDS=20)
+
+_Container `zonix-bench`, `--cpus=8`, regime clean on entry. `ROUNDS=20
+repro.mjs 6 200`: 20 fresh 6-route processes and 20 fresh 200-route
+processes, interleaved._
+
+|            | fast-mode processes | common-mode range |  median |
+| ---------- | ------------------: | ----------------: | ------: |
+| 6 routes   |          **0 / 20** |    99.9k – 110.4k | 105,216 |
+| 200 routes |          **0 / 20** |    96.3k – 109.5k | 105,600 |
+
+Per-round 200/6 ratios 0.932–1.062, median **1.004** — flat. Cumulative
+container tally across sessions 13–14: **6-route processes in the fast mode
+2 of 32; 200-route processes 0 of 32.** The fast mode (~165k) is real —
+two processes reached it in session 13 — but at ~6% per process in this
+environment it is rare, and this sample did not catch one.
+
+What this means for the claim: the bimodal framing stands (the fast mode has
+been observed only with the small table, in both environments), but the
+container cannot yet say whether 0/32 at 200 routes is "never" or "rare
+too". The host, where the fast mode was the default for small tables across
+three sessions, is the stronger place to count — once it is quiet. The
+upstream issue should state the rate honestly: _observed 2/32 vs 0/32 in the
+container; the default vs never observed on the host_.

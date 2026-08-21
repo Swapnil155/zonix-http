@@ -45,6 +45,7 @@
     "cookie-signature": "^1.0.7",
     "express": "^4.21.2",
     "fastify": "^5.2.0",
+    "negotiator": "0.6.3",
     "prettier": "^3.4.2",
     "supertest": "^7.0.0",
     "tsup": "^8.3.5",

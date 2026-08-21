@@ -623,3 +623,77 @@ describe("compat accessors over a real request", () => {
     await request(app.server).get("/plain").expect(200, { ok: true });
   });
 });
+
+// --- req.accepts family (Phase 7: negotiator wired) ---------------------------
+
+describe("req.accepts family", () => {
+  test("returns the offered type as written, or false", async () => {
+    const app = makeApp();
+    app.get("/a", (req, res) => {
+      res.json({
+        ext: req.accepts("json"),
+        full: req.accepts("application/json"),
+        miss: req.accepts("html"),
+        array: req.accepts(["html", "json"]),
+        spread: req.accepts("html", "json"),
+        unknownExt: req.accepts("not-an-ext", "json"),
+      });
+    });
+    await request(app.server).get("/a").set("Accept", "application/json").expect(200, {
+      ext: "json",
+      full: "application/json",
+      miss: false,
+      array: "json",
+      spread: "json",
+      unknownExt: "json",
+    });
+  });
+
+  test("no Accept header: the first offered type wins; no arguments lists all", async () => {
+    const app = makeApp();
+    app.get("/a", (req, res) => {
+      res.json({ first: req.accepts("html", "json"), list: req.accepts() });
+    });
+    await request(app.server)
+      .get("/a")
+      .expect(200, { first: "html", list: ["*/*"] });
+  });
+
+  test("encodings, charsets and languages follow the same shape", async () => {
+    const app = makeApp();
+    app.get("/a", (req, res) => {
+      res.json({
+        enc: req.acceptsEncodings("gzip", "identity"),
+        encList: req.acceptsEncodings(),
+        cs: req.acceptsCharsets(["utf-8"]),
+        csMiss: req.acceptsCharsets("utf-16"),
+        lang: req.acceptsLanguages("en", "fr"),
+        langList: req.acceptsLanguages(),
+      });
+    });
+    await request(app.server)
+      .get("/a")
+      .set("Accept-Encoding", "br;q=0.9, gzip")
+      .set("Accept-Charset", "utf-8")
+      .set("Accept-Language", "fr;q=0.8, en")
+      .expect(200, {
+        enc: "gzip",
+        encList: ["gzip", "br", "identity"],
+        cs: "utf-8",
+        csMiss: false,
+        lang: "en",
+        langList: ["en", "fr"],
+      });
+  });
+
+  test("identity;q=0 makes identity unacceptable", async () => {
+    const app = makeApp();
+    app.get("/a", (req, res) => {
+      res.json({ enc: req.acceptsEncodings("identity"), list: req.acceptsEncodings() });
+    });
+    await request(app.server)
+      .get("/a")
+      .set("Accept-Encoding", "gzip, identity;q=0")
+      .expect(200, { enc: false, list: ["gzip"] });
+  });
+});

@@ -1,4 +1,4 @@
-import { IncomingMessage } from "node:http";
+import { IncomingMessage, type IncomingHttpHeaders } from "node:http";
 import {
   getHeader,
   getHost,
@@ -11,6 +11,13 @@ import {
   typeIs,
 } from "./compat/request.js";
 import { EMPTY, settingsOf } from "./internal/constants.js";
+import { resolveType } from "./http/mime.js";
+import {
+  preferredCharsets,
+  preferredEncodings,
+  preferredLanguages,
+  preferredMediaTypes,
+} from "./negotiation/index.js";
 import { parseQuery } from "./query/simple.js";
 import type { StringMap, ZonixSettings } from "./types.js";
 
@@ -205,8 +212,82 @@ export class ZonixRequest extends IncomingMessage {
     return typeIs(this.headers, flat as readonly unknown[]);
   }
 
+  /**
+   * Content negotiation, Express-style (the `accepts` package's semantics,
+   * pinned by differential test to `negotiator@0.6.3`).
+   *
+   * - No arguments: every type the client accepts, best first.
+   * - With types (spread or array): the FIRST provided type the client
+   *   accepts, returned exactly as you wrote it (`"json"` stays `"json"`),
+   *   or `false`. Extensions resolve through the MIME table; unknown ones
+   *   are skipped, not errors.
+   * - No `Accept` header at all: the first type you offered — Express treats
+   *   silence as "anything".
+   *
+   * Computed on every call (performance rule 1: nothing is parsed until a
+   * handler asks, and most never do).
+   */
+  accepts(): string[];
+  accepts(...types: Array<string | readonly string[]>): string | false;
+  accepts(...types: Array<string | readonly string[]>): string[] | string | false {
+    const flat = flatten(types);
+    if (flat.length === 0) return preferredMediaTypes(acceptHeader(this.headers, "accept"));
+    if (!this.headers.accept) return flat[0] as string;
+
+    const mimes = flat.map((t) => resolveType(t));
+    const valid = mimes.filter((m): m is string => typeof m === "string");
+    const first = preferredMediaTypes(this.headers.accept, valid)[0];
+    return first === undefined ? false : (flat[mimes.indexOf(first)] as string);
+  }
+
+  /** Preferred encodings, or the first acceptable of those offered (or `false`). */
+  acceptsEncodings(): string[];
+  acceptsEncodings(...encodings: Array<string | readonly string[]>): string | false;
+  acceptsEncodings(...encodings: Array<string | readonly string[]>): string[] | string | false {
+    const flat = flatten(encodings);
+    const header = acceptHeader(this.headers, "accept-encoding");
+    if (flat.length === 0) return preferredEncodings(header);
+    return preferredEncodings(header, flat)[0] ?? false;
+  }
+
+  /** Preferred charsets, or the first acceptable of those offered (or `false`). */
+  acceptsCharsets(): string[];
+  acceptsCharsets(...charsets: Array<string | readonly string[]>): string | false;
+  acceptsCharsets(...charsets: Array<string | readonly string[]>): string[] | string | false {
+    const flat = flatten(charsets);
+    const header = acceptHeader(this.headers, "accept-charset");
+    if (flat.length === 0) return preferredCharsets(header);
+    return preferredCharsets(header, flat)[0] ?? false;
+  }
+
+  /** Preferred languages, or the first acceptable of those offered (or `false`). */
+  acceptsLanguages(): string[];
+  acceptsLanguages(...languages: Array<string | readonly string[]>): string | false;
+  acceptsLanguages(...languages: Array<string | readonly string[]>): string[] | string | false {
+    const flat = flatten(languages);
+    const header = acceptHeader(this.headers, "accept-language");
+    if (flat.length === 0) return preferredLanguages(header);
+    return preferredLanguages(header, flat)[0] ?? false;
+  }
+
   /** The app's compiled settings, reached through the server this socket belongs to. */
   #settings(): ZonixSettings {
     return settingsOf(this.socket);
   }
+}
+
+/** `accepts("a", "b")` and `accepts(["a", "b"])` are the same call. */
+function flatten(args: ReadonlyArray<string | readonly string[]>): string[] {
+  if (args.length === 1 && Array.isArray(args[0])) return [...(args[0] as readonly string[])];
+  return args.filter((a): a is string => typeof a === "string");
+}
+
+/**
+ * A header as the negotiator wants it: `undefined` when absent (which means
+ * "accept anything"), joined when Node gives us an array.
+ */
+function acceptHeader(headers: IncomingHttpHeaders, name: string): string | undefined {
+  const value = (headers as Record<string, string | string[] | undefined>)[name];
+  if (value === undefined) return undefined;
+  return Array.isArray(value) ? value.join(", ") : value;
 }

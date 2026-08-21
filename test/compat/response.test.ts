@@ -22,7 +22,8 @@ import {
 import { serializeCookie } from "../../lib/cookies/serialize.js";
 import { sign, unsign } from "../../lib/cookies/sign.js";
 import zonix from "../../lib/index.js";
-import { makeApp, start } from "../helpers/make-app.js";
+import { captureErrors, makeApp, start } from "../helpers/make-app.js";
+import type { ZonixResponse } from "../../lib/index.js";
 
 // --- send inference matrix ---------------------------------------------------
 
@@ -557,3 +558,64 @@ function rawGet(port: number, target: string): Promise<string> {
     socket.on("error", reject);
   });
 }
+
+// --- res.format (Phase 7: negotiator wired) -----------------------------------
+
+describe("res.format", () => {
+  const handlers = (res: ZonixResponse) => ({
+    "text/plain": () => res.send("plain"),
+    "application/json": () => res.json({ kind: "json" }),
+  });
+
+  test("dispatches on the best acceptable type and sets Content-Type + Vary", async () => {
+    const app = makeApp();
+    app.get("/f", (_req, res) => res.format(handlers(res)));
+
+    const json = await request(app.server).get("/f").set("Accept", "application/json").expect(200);
+    assert.deepEqual(json.body, { kind: "json" });
+    assert.equal(json.headers["content-type"], "application/json; charset=utf-8");
+    assert.equal(json.headers["vary"], "Accept");
+
+    const plain = await request(app.server)
+      .get("/f")
+      .set("Accept", "text/plain;q=0.9, application/json;q=0.5")
+      .expect(200);
+    assert.equal(plain.text, "plain");
+    assert.equal(plain.headers["content-type"], "text/plain; charset=utf-8");
+  });
+
+  test("extension keys resolve through the MIME table", async () => {
+    const app = makeApp();
+    app.get("/f", (_req, res) =>
+      res.format({ html: () => res.send("<b>h</b>"), json: () => res.json({ j: 1 }) }),
+    );
+    const res = await request(app.server).get("/f").set("Accept", "text/html").expect(200);
+    assert.equal(res.text, "<b>h</b>");
+    assert.equal(res.headers["content-type"], "text/html; charset=utf-8");
+  });
+
+  test("no acceptable type: default runs when present, else a 406 reaches handleErr", async () => {
+    const withDefault = makeApp();
+    withDefault.get("/f", (_req, res) =>
+      res.format({ ...handlers(res), default: () => res.status(406).send("nope") }),
+    );
+    const fell = await request(withDefault.server).get("/f").set("Accept", "image/png").expect(406);
+    assert.equal(fell.text, "nope");
+    assert.equal(fell.headers["vary"], "Accept");
+
+    const without = makeApp();
+    const seen = captureErrors(without);
+    without.get("/f", (_req, res) => res.format(handlers(res)));
+    await request(without.server).get("/f").set("Accept", "image/png").expect(500);
+    assert.equal(seen.length, 1);
+    assert.equal((seen[0] as { status?: number }).status, 406);
+    assert.deepEqual((seen[0] as { types?: string[] }).types, ["text/plain", "application/json"]);
+  });
+
+  test("no Accept header at all picks the first handler", async () => {
+    const app = makeApp();
+    app.get("/f", (_req, res) => res.format(handlers(res)));
+    const res = await request(app.server).get("/f").expect(200);
+    assert.equal(res.text, "plain");
+  });
+});
