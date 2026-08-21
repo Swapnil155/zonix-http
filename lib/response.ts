@@ -2,6 +2,7 @@ import { createReadStream, readFile as readFileCb, stat as statCb, type Stats } 
 import { ServerResponse } from "node:http";
 import { pipeline } from "node:stream/promises";
 import { ErrorCode, frameworkError, wasDispatched } from "./errors/index.js";
+import { contentDisposition } from "./http/content-disposition.js";
 import { DEFAULT_MIME, lookupMime } from "./http/mime.js";
 import type { ZonixRequest } from "./request.js";
 
@@ -114,32 +115,38 @@ export class ZonixResponse extends ServerResponse<ZonixRequest> {
   }
 
   /**
-   * Mark the response as a download. With a filename, sets both the plain and
-   * the RFC 5987 (`filename*`) forms, and the matching `Content-Type` when the
-   * extension is known.
+   * Mark the response as a download.
+   *
+   * The header is built by `http/content-disposition.ts`, which follows RFC
+   * 6266/5987 and is pinned to the real `content-disposition` package by a
+   * differential test. The earlier hand-rolled version here was wrong in ways
+   * that mattered: it emitted `filename*` even for plain ASCII names, deleted
+   * quotes instead of escaping them, and left the path in the header.
+   *
+   * With a filename, `Content-Type` is also set from its extension when the
+   * extension is known — as Express does.
    */
   attachment(filename?: string): this {
     this.#assertOpen(this.attachment);
-    if (filename === undefined) {
-      this.setHeader("Content-Disposition", "attachment");
-      return this;
-    }
-    if (typeof filename !== "string" || filename.length === 0) {
+    if (filename !== undefined && typeof filename !== "string") {
       throw frameworkError(
-        "res.attachment() requires a non-empty filename when one is given",
+        "res.attachment() requires a filename string",
         this.attachment,
         ErrorCode.INVALID_ARGUMENT,
       );
     }
-    // Strip anything that could break out of the quoted string or inject a header.
-    const safe = filename.replace(/[\r\n"\\]/g, "").replace(/[\u0000-\u001f\u007f]/g, "");
-    const ascii = safe.replace(/[^\x20-\x7e]/g, "_");
-    this.setHeader(
-      "Content-Disposition",
-      `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(safe)}`,
-    );
-    const type = lookupMime(safe);
-    if (type !== undefined && !this.hasHeader("Content-Type")) this.setHeader("Content-Type", type);
+
+    // An empty string is treated as "no filename", matching Express's truthiness check.
+    const name = filename === undefined || filename.length === 0 ? undefined : filename;
+    this.setHeader("Content-Disposition", contentDisposition(name));
+
+    if (name !== undefined) {
+      const type = lookupMime(name);
+      // Express sets the type unconditionally here and ends up writing the
+      // string "false" when the extension is unknown; we simply leave the
+      // header alone in that case. Recorded in the compat table.
+      if (type !== undefined) this.setHeader("Content-Type", type);
+    }
     return this;
   }
 

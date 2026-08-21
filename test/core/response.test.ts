@@ -276,15 +276,14 @@ describe("res.attachment", () => {
     assert.equal(res.headers["content-disposition"], "attachment");
   });
 
-  test("sets both filename forms and infers the type", async () => {
+  test("a plain ASCII filename gets the simple form, and the type is inferred", async () => {
     const app = makeApp();
     app.get("/dl", (_req, res) => res.attachment("report.pdf").json({ ok: true }));
 
     const res = await request(app.server).get("/dl").expect(200);
-    assert.equal(
-      res.headers["content-disposition"],
-      `attachment; filename="report.pdf"; filename*=UTF-8''report.pdf`,
-    );
+    // Only `filename=`. The earlier implementation also emitted a redundant
+    // `filename*=`, which Express does not do for a name that needs no encoding.
+    assert.equal(res.headers["content-disposition"], 'attachment; filename="report.pdf"');
     assert.equal(res.headers["content-type"], "application/pdf");
   });
 
