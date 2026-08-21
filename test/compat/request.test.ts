@@ -18,6 +18,7 @@ import { describe, test } from "node:test";
 import request from "supertest";
 import {
   getHeader,
+  getHost,
   getHostname,
   getIp,
   getIps,
@@ -168,6 +169,42 @@ describe("req.hostname", () => {
     };
     getHostname(h({ host: "example.com" }), "1.2.3.4", counting);
     assert.equal(calls, 0, "Express short-circuits before consulting trust");
+  });
+});
+
+describe("req.host (D6: Express 5 semantics — port included)", () => {
+  test("keeps the port, where hostname strips it", () => {
+    const headers = h({ host: "example.com:3000" });
+    assert.equal(getHost(headers, "1.2.3.4", NO_TRUST), "example.com:3000");
+    assert.equal(getHostname(headers, "1.2.3.4", NO_TRUST), "example.com");
+  });
+
+  test("is identical to hostname when there is no port", () => {
+    const headers = h({ host: "example.com" });
+    assert.equal(getHost(headers, "1.2.3.4", NO_TRUST), "example.com");
+    assert.equal(getHostname(headers, "1.2.3.4", NO_TRUST), "example.com");
+  });
+
+  test("keeps a bracketed IPv6 literal and its port intact", () => {
+    const headers = h({ host: "[::1]:3000" });
+    assert.equal(getHost(headers, "1.2.3.4", NO_TRUST), "[::1]:3000");
+    assert.equal(getHostname(headers, "1.2.3.4", NO_TRUST), "[::1]");
+  });
+
+  test("an IPv6 literal with no port is unchanged by either", () => {
+    const headers = h({ host: "[::ffff:127.0.0.1]" });
+    assert.equal(getHost(headers, "1.2.3.4", NO_TRUST), "[::ffff:127.0.0.1]");
+    assert.equal(getHostname(headers, "1.2.3.4", NO_TRUST), "[::ffff:127.0.0.1]");
+  });
+
+  test("honours trust proxy exactly as hostname does", () => {
+    const headers = h({ host: "real.example:80", "x-forwarded-host": "fwd.example:443" });
+    assert.equal(getHost(headers, "1.2.3.4", NO_TRUST), "real.example:80");
+    assert.equal(getHost(headers, "1.2.3.4", ALL_TRUST), "fwd.example:443");
+  });
+
+  test("is undefined when Host is absent", () => {
+    assert.equal(getHost(h({}), "1.2.3.4", NO_TRUST), undefined);
   });
 });
 
@@ -486,6 +523,18 @@ describe("compat accessors over a real request", () => {
 
     // A GET with no body at all: null, not false.
     await request(app.server).get("/is").expect(200, { json: null });
+  });
+
+  test("req.host keeps the port and req.hostname strips it, over the wire", async () => {
+    const app = makeApp();
+    app.get("/h", (req, res) => {
+      res.json({ host: req.host ?? null, hostname: req.hostname ?? null });
+    });
+
+    await request(app.server)
+      .get("/h")
+      .set("Host", "example.com:8080")
+      .expect(200, { host: "example.com:8080", hostname: "example.com" });
   });
 
   test("req.is accepts varargs and a single array, like Express", async () => {

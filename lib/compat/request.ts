@@ -119,17 +119,17 @@ export function getProtocol(
 }
 
 /**
- * `req.hostname` — the host with any port removed.
+ * `req.host` — the host **including its port** (decision D6).
  *
- * The port strip is the trap. `"[::1]:3000".split(":")[0]` is `"["`, so an
- * IPv6 literal has to be handled by finding the closing bracket first and only
- * then looking for a colon after it.
+ * Express 5 semantics. Express 4's `req.host` was an alias of `hostname` with
+ * the port stripped, which its own documentation calls a wart; the difference
+ * belongs in the README compat table.
  *
- * The trust function is called at most once, and not at all when
+ * The trust function is consulted at most once, and not at all when
  * `X-Forwarded-Host` is absent — Express short-circuits, and a test that counts
  * trust invocations can see the difference.
  */
-export function getHostname(
+export function getHost(
   headers: IncomingHttpHeaders,
   remoteAddress: string | undefined,
   trust: TrustFunction,
@@ -146,14 +146,26 @@ export function getHostname(
   } else {
     host = headerString(headers, "host");
   }
-  if (host === undefined || host.length === 0) return undefined;
+  return host === undefined || host.length === 0 ? undefined : host;
+}
 
-  if (host.charCodeAt(0) === 0x5b /* [ */) {
-    const close = host.indexOf("]");
-    // An unterminated bracket is malformed; Express hands back the truncation.
-    return close === -1 ? host.slice(0, 1) : host.slice(0, close + 1);
-  }
-  const colon = host.indexOf(":");
+/**
+ * `req.hostname` — `host` with any port removed.
+ *
+ * The port strip is the trap. `"[::1]:3000".split(":")[0]` is `"["`, so the
+ * search for the port colon must start *after* the closing bracket of an IPv6
+ * literal.
+ */
+export function getHostname(
+  headers: IncomingHttpHeaders,
+  remoteAddress: string | undefined,
+  trust: TrustFunction,
+): string | undefined {
+  const host = getHost(headers, remoteAddress, trust);
+  if (host === undefined) return undefined;
+
+  const offset = host.charCodeAt(0) === 0x5b /* [ */ ? host.indexOf("]") + 1 : 0;
+  const colon = host.indexOf(":", offset);
   return colon === -1 ? host : host.slice(0, colon);
 }
 

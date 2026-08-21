@@ -1,6 +1,7 @@
 import { IncomingMessage } from "node:http";
 import {
   getHeader,
+  getHost,
   getHostname,
   getIp,
   getIps,
@@ -17,6 +18,7 @@ import type { StringMap, ZonixSettings } from "./types.js";
 interface CompatCache {
   originalUrl?: string;
   protocol?: string;
+  host?: string | undefined;
   hostname?: string | undefined;
   subdomains?: string[];
   ip?: string | undefined;
@@ -131,6 +133,20 @@ export class ZonixRequest extends IncomingMessage {
   /** `true` when `protocol` is https. */
   get secure(): boolean {
     return this.protocol === "https";
+  }
+
+  /**
+   * The host **including its port**, e.g. `example.com:3000`.
+   *
+   * Express 5 semantics, per decision D6 — Express 4 returned the port-stripped
+   * form here. Use `hostname` when you want that.
+   */
+  get host(): string | undefined {
+    const cache = (this.#compat ??= {});
+    if (!("host" in cache)) {
+      cache.host = getHost(this.headers, this.socket?.remoteAddress, this.#settings().trust);
+    }
+    return cache.host;
   }
 
   /**
