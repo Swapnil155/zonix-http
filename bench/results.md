@@ -678,10 +678,10 @@ on the reference rig". This is that run.
 
 ## 1. Headline — both configurations clear the kill bar
 
-| Config          | raw `node:http` |     turbo | ratio (median of 5) |     per-pair range | container |
-| --------------- | --------------: | --------: | ------------------: | -----------------: | --------: |
-| p=16, C=6       |         150,848 | 1,606,115 |          **10.78×** | 10.37× – 10.84×    |    12.63× |
-| p=1, C=6        |          84,167 |   144,325 |           **1.71×** |  1.67× – 1.78×     |     1.78× |
+| Config    | raw `node:http` |     turbo | ratio (median of 5) |  per-pair range | container |
+| --------- | --------------: | --------: | ------------------: | --------------: | --------: |
+| p=16, C=6 |         150,848 | 1,606,115 |          **10.78×** | 10.37× – 10.84× |    12.63× |
+| p=1, C=6  |          84,167 |   144,325 |           **1.71×** |   1.67× – 1.78× |     1.78× |
 
 **The prediction in M4 held.** The transferable signal was named in advance as
 the p=1 ratio, and it transferred to within 4% (1.78× → 1.71×) across a 1-core
@@ -716,13 +716,13 @@ made every throughput number above meaningless.
 
 Sweeping connection count at p=1 (3 pairs each):
 
-| C   | raw    | turbo   | ratio      |
-| --- | -----: | ------: | ---------: |
-| 1   | 37,896 |  43,896 | **1.16×**  |
-| 2   | 72,465 | 109,449 |     1.51×  |
-| 6   | 84,167 | 144,325 |     1.71×  |
-| 12  | 90,721 | 144,874 |     1.60×  |
-| 24  | 92,963 | 151,209 |     1.63×  |
+| C   |    raw |   turbo |     ratio |
+| --- | -----: | ------: | --------: |
+| 1   | 37,896 |  43,896 | **1.16×** |
+| 2   | 72,465 | 109,449 |     1.51× |
+| 6   | 84,167 | 144,325 |     1.71× |
+| 12  | 90,721 | 144,874 |     1.60× |
+| 24  | 92,963 | 151,209 |     1.63× |
 
 **At C=1 the spike fails its own kill bar (1.16× < 1.30×).** That is not a
 defect in the spike; it is a statement about what Turbo actually buys. With one
@@ -746,11 +746,11 @@ A single-threaded Node client could easily be the real bottleneck at 150k rps,
 which would make every ratio above an artifact. Tested directly by driving one
 server with 1, 2 and 3 independent client **processes** and summing:
 
-| clients (C=12 each) | raw `node:http` | turbo   |
+| clients (C=12 each) | raw `node:http` |   turbo |
 | ------------------: | --------------: | ------: |
-| 1                   |          90,494 | 139,347 |
-| 2                   |          91,744 | 149,584 |
-| 3                   |          89,098 | 152,188 |
+|                   1 |          90,494 | 139,347 |
+|                   2 |          91,744 | 149,584 |
+|                   3 |          89,098 | 152,188 |
 
 Raw is flat — it is genuinely server-bound at ~91k. Turbo rises ~9% from one
 client to three and then flattens, so a single client mildly understates it; its
@@ -778,3 +778,92 @@ The production question is unchanged and now has a number attached to it: the
 compat shim must retain ≥ 1.2× of the ~1.65× throughput headroom, i.e. the shim
 may consume at most ~73% of the saving before Turbo stops being worth its
 parsing-surface risk. That is the design doc's budget.
+
+---
+
+# T-1 — the D7 adjudication: Turbo dies
+
+_Session 9, Aug 2026. Node 22.20.0, cpu preflight **OK** (3.7% across 24 cores).
+Artifacts in `bench/servers/spike/t1/`: `turbo-t1.mjs` (the transport),
+`raw.mjs` / `zonix.mjs` / `fastify.mjs` (baselines), `gauntlet.mjs` (16 checks)
+and `smoke.mjs` (baseline body correctness) — the correctness set ran green
+BEFORE any number below was read, per the Session 8 standing practice._
+
+## 1. What T-1 measured
+
+The thinnest **end-to-end** Turbo path per the sharpened spec — everything the
+T-0 spike skipped is in the measured path:
+
+- **Real parsing with limits**: token-validated method, printable-validated
+  target, exact version match, per-header colon split with the
+  no-whitespace-before-colon rule, token-validated names, 100-header /
+  8KB-line / 16KB-head caps, strict Content-Length digits, duplicate-CL → 400,
+  Transfer-Encoding → 501. No terminator-scan shortcut.
+- **The head-of-line ordering queue at depth 1**: every request allocates a
+  slot; responses emit in request order; corking is opportunistic only.
+  The gauntlet proves ordering with a slow-first-request pipeline and proves
+  a parse error behind an in-flight response lets it finish first, in order.
+- **The documented zonix `res` subset**: chainable validated `status()`,
+  `set()`, per-request `json()` (serialize + header build per request — no
+  static response buffers; the one cache is the per-second Date string, which
+  node:http itself also caches).
+- **Dispatch** through the method+path map (zonix's static fast path), 404 on
+  miss, sync-throw → 500 + close. Content-Length bodies drained for framing.
+
+Baselines: raw `node:http` kept deliberately maximal (prebuilt body buffers) —
+the bar is the best node:http can do, not a strawman. Fastify default config,
+plain-callback `reply.send` (no promise tax). zonix from the built dist.
+Async bracket: identical `setImmediate` callback mechanism in all four servers.
+
+## 2. The numbers (paired, interleaved, C=6, median of per-round ratios)
+
+**p=1 (judged), 5 rounds:**
+
+| Bracket    |    raw |  zonix | fastify |   turbo |              turbo/raw |          turbo/fastify | turbo/zonix |
+| ---------- | -----: | -----: | ------: | ------: | ---------------------: | ---------------------: | ----------: |
+| sync-hello | 89,507 | 84,305 |  86,253 | 120,772 | **1.362×** (1.29–1.39) | **1.392×** (1.36–1.42) |      1.408× |
+| async-echo | 91,651 | 86,503 |  88,280 | 117,553 |                 1.281× |                 1.329× |      1.349× |
+
+**p=16 (corking bracket, informational, never judged), 3 rounds:**
+
+| Bracket    | turbo/raw | turbo/fastify | turbo/zonix |
+| ---------- | --------: | ------------: | ----------: |
+| sync-hello |    1.646× |        1.715× |      1.712× |
+| async-echo |    1.551× |        1.621× |      1.654× |
+
+## 3. D7 verdict
+
+```
+turbo/raw:     1.362x   bar 1.40x   FAILED   (no single pair reached 1.40)
+turbo/fastify: 1.392x   bar 1.30x   cleared
+ONE BAR MISSED -> TURBO DIES (D7)
+```
+
+No re-rolls: the judged configuration (p=1, C=6, sync hello) was fixed in
+advance, the median of five paired rounds is the number, and the per-pair
+range never touched the bar. Re-running until a 1.40 appeared is exactly the
+practice this repo's methodology exists to forbid.
+
+## 4. Why this is a good death, not a wasted session
+
+**The erosion is the finding.** The T-0 spike (no parse, no ordering queue,
+static response buffer) measured **1.71×** at p=1. The end-to-end path with
+real parsing, HOL ordering and per-request response building measures
+**1.36×** — the honest costs ate ~20% of throughput, which is precisely the
+question T-1 existed to answer before any hardening investment. TURBO.md's
+shim-budget worry was correct; D7's raised bar did its job.
+
+Consistency checks, all coherent: turbo T-1 120,772 vs T-0 spike 144,325
+(−16%, the price of real parsing + shim); raw 89,507 here vs 84,167 in T-0
+(+6% session drift, cancelled by pairing); the corking bracket confirms
+TURBO.md §6's prediction — sync p=16 corks (1.65×), async p=16 loses most of
+the corking increment (1.55×), and at p=1 corking never engages at all.
+
+**The claimable residue:** `turbo/zonix = 1.41×` is what a zonix user would
+have gained. Per D7's own reasoning, a ~1.4× margin — eroding under noise,
+hardware generations and adversarial re-benching — does not justify permanently
+owning a security-critical HTTP parser with a smuggling surface and forever
+fuzz upkeep. zonix's crown rests on M1–M3 + parity, as D7 said it would.
+
+Turbo is dead. The number is recorded. `bench/servers/spike/t1/` stays in the
+tree as the falsification record and as reusable instrumentation.

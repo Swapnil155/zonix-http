@@ -1,9 +1,16 @@
 # Turbo — a second transport for zonix
 
-> **Status: design, not a work order.** CLAUDE.md M4 is explicit that nothing in
-> the Turbo track starts before v1.0 is on npm, except the T-0 spike — which is
-> now done and passed. This document is what T-0 unlocked: the design that must
-> exist _before any further code_. It is written to be argued with.
+> **Status: KILLED at T-1 (Session 9, Aug 2026) under D7.** The end-to-end
+> path — real parsing with limits, head-of-line ordering, the zonix `res`
+> subset — measured **1.362× raw `node:http`** on the judged cell (p=1, C=6,
+> sync hello, paired, quiet machine; no single pair reached 1.40×). D7's bar is
+> ≥ 1.40× vs raw AND ≥ 1.30× vs Fastify; the first bar failed (the second
+> cleared at 1.392×). Turbo dies here, as D7 prescribed: the honest costs ate
+> the T-0 spike's 1.71× down to 1.36×, and a ~1.4× margin does not buy a
+> permanent security-critical parsing surface. Full record in
+> `bench/results.md` ("T-1 — the D7 adjudication"); artifacts and correctness
+> gauntlet in `bench/servers/spike/t1/`. This document remains as the design
+> record and the falsification protocol that killed its own proposal.
 
 ---
 
