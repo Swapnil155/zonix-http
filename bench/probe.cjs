@@ -65,7 +65,10 @@ const temp = probe(os.tmpdir(), "%TEMP%");
 
 console.log("");
 if (!repo.degraded) {
-  console.log("VERDICT: REGIME CLEAN in this context - exclusion effective, W1 unfrozen here.");
+  console.log(
+    "VERDICT: REGIME CLEAN in this context - no open() interposition; file scenarios\n" +
+      "and cross-framework claims are adjudicable here (rule 7).",
+  );
 } else if (repo.degraded && !temp.degraded) {
   console.log("VERDICT: INVERTED - repo degraded but %TEMP% clean; exclusion misconfigured.");
 } else if (repo.opens < DEGRADED_OPENS_PER_SEC && repo.ratio > DEGRADED_RATIO) {

@@ -1,0 +1,13 @@
+node_modules
+dist
+.git
+bench/.m3
+bench/.fixtures
+bench/.results
+bench/.profile
+bench/.baseline-build
+bench/.baseline-src
+bench/.*.json
+*.cpuprofile
+*.log
+*.tgz

@@ -3,8 +3,9 @@
 // rule since the 40%-wobble session), and no isolation verdict may be drawn.
 import autocannon from "autocannon";
 import { spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
-const ROOT = "C:/Users/ADMIN/Code/Node_Framework";
+const ROOT = fileURLToPath(new URL("../../", import.meta.url));
 let port = 4400;
 
 const run = () =>

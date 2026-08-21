@@ -3,8 +3,9 @@
 // variant whose 200/6 ratio stops cliffing names the ingredient.
 import autocannon from "autocannon";
 import { spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
-const ROOT = "C:/Users/ADMIN/Code/Node_Framework";
+const ROOT = fileURLToPath(new URL("../../", import.meta.url));
 const ROUNDS = Number(process.env.ROUNDS ?? 3);
 const VARIANTS = (process.env.VARIANTS ?? "A,B,C").split(",");
 const FILES = {

@@ -2,11 +2,12 @@
 // 200 scale routes, with and without the fixed six, interleaved, 3 rounds.
 import autocannon from "autocannon";
 import { spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
-const REPRO = "C:/Users/ADMIN/Code/Node_Framework/upstream/fastify-cliff/repro.mjs";
+const REPRO = fileURLToPath(new URL("./repro.mjs", import.meta.url));
 let port = 4200;
 
-const ROOT = "C:/Users/ADMIN/Code/Node_Framework";
+const ROOT = fileURLToPath(new URL("../../", import.meta.url));
 const run = (routes, mode) =>
   new Promise((resolve, reject) => {
     const bound = ++port;

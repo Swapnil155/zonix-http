@@ -3,8 +3,9 @@
 // the machine cannot adjudicate table-size effects for ANY framework today.
 import autocannon from "autocannon";
 import { spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
-const ROOT = "C:/Users/ADMIN/Code/Node_Framework";
+const ROOT = fileURLToPath(new URL("../../", import.meta.url));
 let port = 4700;
 
 const run = (routes) =>
