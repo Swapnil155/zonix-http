@@ -53,8 +53,14 @@ function sh(args, { inherit = true } = {}) {
 }
 
 // Host preflight: the VM borrows these cores.
-reportCpu(await measureCpu({ sampleMs: 700 }));
+const cpu = await measureCpu({ sampleMs: 700 });
+reportCpu(cpu);
 console.log("");
+// --abort-busy: a matrix that must be comparable refuses to start on a busy host.
+if (cpu.busy && flags.includes("--abort-busy")) {
+  console.log("BUSY-MACHINE: aborting before docker starts (--abort-busy).");
+  process.exit(2);
+}
 
 if (build) {
   console.log(`building ${IMAGE} (repo copied in, never mounted)...`);

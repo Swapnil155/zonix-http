@@ -1112,3 +1112,90 @@ too". The host, where the fast mode was the default for small tables across
 three sessions, is the stronger place to count — once it is quiet. The
 upstream issue should state the rate honestly: _observed 2/32 vs 0/32 in the
 container; the default vs never observed on the host_.
+
+---
+
+# Full matrix 2026-08-22 (container)
+
+_The first complete fresh matrix in the D8 courtroom: every scenario, all
+three frameworks, one session. Harness: `bench/matrix.mjs` via
+`node bench/container.mjs --cpus=8 --abort-busy -- node bench/matrix.mjs --rounds=5`.
+Rotating framework order every round; one fresh process per measurement;
+1 warmup (2s) + 5s measured; ≥5 rounds, extended to 8 while any framework's
+spread exceeded 5%; median reported; every scenario asserts its expected
+status (404 scenario: 404 == 100% of responses); regime checked pre AND
+post. **Ratios are the claim. Container absolutes are never compared with the
+host-era table — different courtroom.**_
+
+**Host preflight:** cpu OK — 5.1% system-wide across 24 cores.
+**Container entry probe:** repo 574,063 opens/sec @ 5.0×, `/tmp` 607,737 @
+4.9× → REGIME CLEAN. In-harness: cpu OK — 0.1%.
+
+```
+context: linux 6.6.87.2-microsoft-standard-WSL2 node v22.20.0
+  cwd /zonix
+  tmp /tmp
+  exe /usr/local/bin/node
+regime pre:  OK — 314,755 opens/sec, 2,379,025 fd-reads/sec (7.6x)
+regime post: OK — 295,011 opens/sec, 2,792,064 fd-reads/sec (9.5x) -> no flip; file numbers stand
+node v22.20.0 · container cpus=8 · image node:22.20.0-bookworm-slim · repo copied in
+```
+
+| scenario                 | zonix rps | express rps | fastify rps | zonix/express | zonix/fastify |   spread% (z/e/f) | rounds |
+| ------------------------ | --------: | ----------: | ----------: | ------------: | ------------: | ----------------: | -----: |
+| hello                    |   162,227 |      28,042 |     174,758 |         5.79× |         0.93× |   7.3 / 4.6 / 7.8 |      8 |
+| routes-6-param           |   148,877 |      26,925 |     162,061 |         5.53× |         0.92× | 12.0 / 4.2 / 12.7 |      8 |
+| routes-200-param         |   145,651 |      23,046 |     108,186 |         6.32× |         1.35× |  11.5 / 8.8 / 4.1 |      8 |
+| chain                    |   152,051 |      27,866 |     169,587 |         5.46× |         0.90× |  15.8 / 4.4 / 8.9 |      8 |
+| 404                      |   153,152 |      27,736 |     155,533 |         5.52× |         0.98× |   3.1 / 4.2 / 3.2 |      5 |
+| post-json-echo           |    47,466 |      15,345 |      50,544 |         3.09× |         0.94× |   4.9 / 3.1 / 3.5 |      5 |
+| file-1kb                 |    12,710 |       7,100 |       8,712 |         1.79× |         1.46× |   3.4 / 3.7 / 4.3 |      5 |
+| file-1mb (informational) |     1,441 |       1,320 |       1,536 |         1.09× |         0.94× |   6.8 / 2.1 / 7.3 |      8 |
+
+### Per-round values (fastify in full; zonix alongside as the rule-9 flat control)
+
+| scenario         | fastify rounds                                                         | fastify split | zonix rounds                                                           | express rounds                                                 |
+| ---------------- | ---------------------------------------------------------------------- | ------------- | ---------------------------------------------------------------------- | -------------------------------------------------------------- |
+| hello            | 178,624, 175,834, 174,707, 174,810, 173,811, 175,578, 171,379, 164,954 | unimodal      | 162,675, 161,779, 169,613, 164,672, 157,837, 167,027, 160,678, 161,114 | 28,706, 28,587, 27,816, 28,062, 28,376, 28,021, 27,410, 27,448 |
+| routes-6-param   | 163,290, 146,291, 160,576, 166,874, 157,914, 163,981, 160,832, 163,290 | unimodal      | 151,846, 134,445, 147,904, 143,450, 150,182, 149,850, 147,008, 152,384 | 27,077, 26,891, 27,096, 26,958, 25,963, 26,562, 26,846, 27,070 |
+| routes-200-param | 107,168, 104,826, 108,205, 107,104, 108,794, 108,166, 108,922, 109,229 | unimodal      | 146,701, 149,261, 143,194, 138,586, 148,826, 144,602, 132,506, 149,312 | 23,438, 22,894, 23,243, 22,459, 22,670, 23,198, 21,416, 23,397 |
+| chain            | 172,838, 171,610, 172,403, 169,664, 169,203, 157,709, 159,066, 169,510 | unimodal      | 158,298, 155,482, 156,582, 154,355, 146,803, 134,253, 145,395, 149,747 | 27,538, 28,258, 28,200, 28,149, 28,158, 27,077, 27,029, 27,582 |
+| 404              | 158,272, 155,354, 155,533, 153,254, 155,533                            | unimodal      | 154,893, 153,331, 153,024, 153,152, 150,080                            | 27,845, 27,915, 26,754, 27,250, 27,736                         |
+| post-json-echo   | 50,563, 51,280, 50,544, 49,533, 49,802                                 | unimodal      | 46,275, 47,466, 48,598, 48,483, 47,082                                 | 15,591, 15,693, 15,345, 15,214, 15,246                         |
+| file-1kb         | 8,712, 9,012, 8,700, 8,716, 8,639                                      | unimodal      | 12,814, 12,710, 12,623, 12,740, 12,385                                 | 7,160, 7,105, 7,059, 7,100, 6,895                              |
+| file-1mb         | 1,585, 1,560, 1,541, 1,523, 1,541, 1,532, 1,473, 1,520                 | unimodal      | 1,458, 1,439, 1,372, 1,471, 1,458, 1,426, 1,443, 1,411                 | 1,328, 1,317, 1,322, 1,300, 1,324, 1,325, 1,302, 1,302         |
+
+### Reading it honestly
+
+- **Within this session every Fastify scenario is unimodal — but the session
+  as a whole shows both modes.** Small tables (hello, routes-6, chain) ran
+  **16/16 processes in the fast band** (~165–178k); routes-200 ran **8/8 in the
+  common band** (~108k). Sessions 13–14 saw the opposite frequency in this same
+  container (2/32 fast at 6 routes). So the fast mode is not rare in the
+  container after all — its availability varies _per session_, and in every
+  session yet recorded, in both environments, **200-route processes have never
+  been observed in it (now 0/40 container, 0/all host)**. The bimodal framing
+  stands and strengthens; the "rare" qualifier from Session 14 is withdrawn.
+- **zonix, the flat control: 6→200 routes costs 2.2%** (148,877 → 145,651,
+  inside its own spread); Fastify fast-6 → common-200 is −33%. Same shape as
+  every prior window: 1.35× at 200, 0.92× at 6.
+- **Ratios vs prior container readings hold within noise** (file-1kb 1.79× /
+  1.46× vs Session 13's 1.74× / 1.43×) even though every absolute in this run
+  is higher than Session 13's (Express 28k vs earlier ~26k-class; zonix hello
+  162k vs 141–150k) — the VM itself was in a faster band. Absolutes: never the
+  claim.
+- **Spread breaches, logged:** zonix exceeded 5% on hello (7.3%), routes-6
+  (12.0%), routes-200 (11.5%) and chain (15.8%) even after extending to 8
+  rounds; each is a single low round (e.g. chain round 6 134k, routes-200
+  round 7 132k) in an otherwise tight band, and Fastify shows the same
+  single-round dips (hello r8, routes-6 r2, chain r6–7). Medians stand;
+  the ±5% floor applies to the small-scenario ratios as always. file-1mb
+  remains informational (7% spread, kernel-bound).
+- **404 scenario:** 404 == 100% asserted in every process. Express emitted
+  `MaxListenersExceededWarning: 11 close listeners added to [Socket]` on this
+  path under pipelining 10 (source not investigated); it is Express's own
+  warning, recorded here so nobody mistakes it for ours.
+- **Standing after this matrix (container, same-session):** parity band
+  0.90–0.98× Fastify on the micro JSON scenarios (hello/6-param/chain/404/echo),
+  5.5–6.3× Express; **1.35× Fastify at 200 routes; 1.46× Fastify and 1.79×
+  Express on file-1kb.** Footprint table (M3) unchanged.

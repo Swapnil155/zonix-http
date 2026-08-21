@@ -3,7 +3,20 @@
 **Phase:** 7 — OPEN. Negotiator landed and wired; tests green. Next: ETag/fresh
 → 304, range/206, compression, serveStatic cache (the W1/M1 stack).
 
-## Done this session
+## Done this session (2026-08-22 � full fresh matrix, container-official)
+
+`bench/matrix.mjs` (new): all 8 scenarios x 3 frameworks, rotating order, 5-8
+rounds, per-scenario status assertion, regime pre+post, per-round Fastify values
+with a fast-band flag. `container.mjs --abort-busy` guard. Run: host 5.1% quiet,
+container clean (574k opens/sec), no flip. Table in `bench/results.md` "Full
+matrix 2026-08-22 (container)". Headline ratios: 0.90-0.98x Fastify on micro
+JSON, 5.5-6.3x Express, **1.35x Fastify @200 routes, 1.46x Fastify / 1.79x
+Express file-1kb**. Fastify ran 16/16 fast-band on small tables, 8/8 common
+at 200 (Session 14's "rare" withdrawn: availability varies per session; 200
+routes still 0/40 container). zonix spread breached 5% on four scenarios
+(single low rounds), logged. Phase 7 continues next session as planned below.
+
+## Done last session
 
 **1. Negotiator, oracle-first.** `negotiator@0.6.3` pinned exactly (the version
 Express 4 reaches through `accepts`). `lib/negotiation/` — `shared.ts` primitives
