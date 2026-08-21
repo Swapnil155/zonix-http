@@ -14,7 +14,14 @@ import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { ensureFixtures } from "./fixtures.mjs";
-import { measureRegime, reportRegime, measureCpu, reportCpu } from "./regime.mjs";
+import {
+  compareRegimes,
+  measureRegime,
+  reportRegime,
+  reportRegimeFlip,
+  measureCpu,
+  reportCpu,
+} from "./regime.mjs";
 
 const SCENARIOS = {
   hello: { path: "/", connections: 100, pipelining: 10, duration: 5 },
@@ -183,4 +190,10 @@ for (const name of names) {
           : "REVERT (< 1% win: complexity has a budget)";
   console.log(`  verdict: ${verdict}`);
   console.log("");
+}
+
+// Rule 7 is pre AND post: a mid-run regime flip voids the file numbers.
+if (regime !== undefined) {
+  const { SMALL } = ensureFixtures();
+  reportRegimeFlip(compareRegimes(regime, measureRegime(SMALL)));
 }

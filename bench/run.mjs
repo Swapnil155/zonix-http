@@ -15,7 +15,15 @@ import { writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { ensureFixtures } from "./fixtures.mjs";
 import { ECHO_BODY_JSON, scaleProbePaths } from "./servers/shared.mjs";
-import { formatRegime, measureRegime, reportRegime, measureCpu, reportCpu } from "./regime.mjs";
+import {
+  compareRegimes,
+  formatRegime,
+  measureRegime,
+  reportRegime,
+  reportRegimeFlip,
+  measureCpu,
+  reportCpu,
+} from "./regime.mjs";
 
 const SCENARIOS = [
   // hello keeps -d 10 so its number stays comparable with the v1 README table.
@@ -317,6 +325,9 @@ if (regime !== undefined) {
   if (regime.degraded) {
     console.log("File rows above are DEGRADED-REGIME: not comparable across frameworks.");
   }
+  // Rule 7 is pre AND post: a mid-run regime flip voids the file numbers.
+  const { SMALL } = ensureFixtures();
+  reportRegimeFlip(compareRegimes(regime, measureRegime(SMALL)));
 }
 
 console.log("");

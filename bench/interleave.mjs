@@ -14,7 +14,14 @@ import { writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { ensureFixtures } from "./fixtures.mjs";
 import { ECHO_BODY_JSON, scaleProbePaths } from "./servers/shared.mjs";
-import { formatRegime, measureRegime, reportRegime, measureCpu, reportCpu } from "./regime.mjs";
+import {
+  compareRegimes,
+  measureRegime,
+  reportRegime,
+  reportRegimeFlip,
+  measureCpu,
+  reportCpu,
+} from "./regime.mjs";
 
 const SCENARIOS = {
   "file-1kb": { path: "/file/small", connections: 100, pipelining: 10, duration: 5 },
@@ -201,6 +208,13 @@ for (const name of names) {
       .map((f) => `zonix vs ${f} ${(z / median(samples[f])).toFixed(2)}x`)
       .join(" · "),
   );
+  console.log("");
+}
+
+// Rule 7 is pre AND post: a mid-run regime flip voids the file numbers.
+if (regime !== undefined) {
+  const { SMALL } = ensureFixtures();
+  reportRegimeFlip(compareRegimes(regime, measureRegime(SMALL)));
   console.log("");
 }
 

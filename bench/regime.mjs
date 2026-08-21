@@ -13,9 +13,19 @@
 // claim may be built on them.
 import { closeSync, openSync, readFileSync, readSync } from "node:fs";
 import { cpus as osCpus } from "node:os";
+// The detector constants live in ONE shared CJS module so probe.cjs (the
+// admin-side double-click check) and this harness can never drift apart.
+import constants from "./regime-constants.cjs";
 
-/** Opens/sec below which the machine is considered degraded (CLAUDE.md rule 7). */
-export const REGIME_THRESHOLD_OPS = 50_000;
+const {
+  DEGRADED_OPENS_PER_SEC,
+  DEGRADED_RATIO,
+  isDegraded,
+  captureFingerprint,
+  formatFingerprint,
+} = constants;
+
+export { DEGRADED_OPENS_PER_SEC, DEGRADED_RATIO, captureFingerprint, formatFingerprint };
 
 /**
  * Measure `open` + `read` + `close` throughput on `path`, plus the rate of
@@ -42,15 +52,53 @@ export function measureRegime(path, { iterations = 2000 } = {}) {
   closeSync(fd);
   const readsPerSec = (readIterations / readNs) * 1e9;
 
-  const degraded = opensPerSec < REGIME_THRESHOLD_OPS;
+  const ratio = readsPerSec / opensPerSec;
+  // Recalibrated rule 7: degraded = slow opens OR interposition-shaped ratio.
+  // Both lines sit mid-gap between the two MEASURED regimes on this rig
+  // (clean ~48k @ ~12.5x, filter-driver ~5k @ ~124x); the ratio separates a
+  // filter driver from a merely slow disk, which slows both numbers together.
+  const degraded = isDegraded(opensPerSec, ratio);
   return {
     opensPerSec,
     readsPerSec,
-    ratio: readsPerSec / opensPerSec,
+    ratio,
     degraded,
     stamp: degraded ? "DEGRADED-REGIME" : "OK",
-    threshold: REGIME_THRESHOLD_OPS,
+    thresholds: { opensPerSec: DEGRADED_OPENS_PER_SEC, ratio: DEGRADED_RATIO },
+    // Session 11: a reading without its execution-context fingerprint is
+    // unattributable - an interactive shell and a harness context can sit in
+    // different regimes on the same machine at the same time.
+    fingerprint: captureFingerprint(),
   };
+}
+
+/**
+ * Rule 7 is pre AND post: BI-1's original disaster was a MID-RUN regime flip,
+ * and a preflight alone was only ever half a check. Pre/post disagreement on
+ * the degraded verdict stamps the session REGIME-FLIP and voids it.
+ */
+export function compareRegimes(pre, post) {
+  const flip = pre.degraded !== post.degraded;
+  return {
+    flip,
+    stamp: flip ? "REGIME-FLIP" : post.stamp,
+    pre,
+    post,
+  };
+}
+
+/** Print the post-check verdict; a flip voids every file number in the run. */
+export function reportRegimeFlip(comparison) {
+  if (!comparison.flip) {
+    console.log(`regime post-check: ${comparison.stamp} - no flip; file numbers stand`);
+    return;
+  }
+  console.log(
+    "regime post-check: REGIME-FLIP - the regime changed mid-run " +
+      `(pre ${comparison.pre.stamp}, post ${comparison.post.stamp}).`,
+  );
+  console.log("  Every file number in this session is VOID (rule 7): a mid-run flip charges");
+  console.log("  the change to whichever framework benched later.");
 }
 
 const fmt = (n) => Math.round(n).toLocaleString("en-US");
@@ -59,14 +107,16 @@ const fmt = (n) => Math.round(n).toLocaleString("en-US");
 export function formatRegime(regime) {
   return (
     `regime: ${regime.stamp} — ${fmt(regime.opensPerSec)} opens/sec ` +
-    `(threshold ${fmt(regime.threshold)}), ${fmt(regime.readsPerSec)} reads/sec on an open fd ` +
-    `(${regime.ratio.toFixed(0)}x)`
+    `(degraded below ${fmt(regime.thresholds.opensPerSec)}), ` +
+    `${fmt(regime.readsPerSec)} reads/sec on an open fd ` +
+    `(${regime.ratio.toFixed(1)}x, degraded above ${regime.thresholds.ratio}x)`
   );
 }
 
 /** Print the preflight and, when degraded, say plainly what may not be claimed. */
 export function reportRegime(regime) {
   console.log(formatRegime(regime));
+  console.log(formatFingerprint(regime.fingerprint));
   if (regime.degraded) {
     console.log(
       "  File scenarios will still run, but are stamped DEGRADED-REGIME: no absolute\n" +
