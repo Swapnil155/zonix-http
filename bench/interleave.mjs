@@ -22,6 +22,14 @@ const SCENARIOS = {
   hello: { path: "/", connections: 100, pipelining: 10, duration: 5 },
   param: { path: "/users/42", connections: 100, pipelining: 10, duration: 5 },
   chain: { path: "/chain", connections: 100, pipelining: 10, duration: 5 },
+  "routes-6-param": {
+    requests: scaleProbePaths(6, 10).map((path) => ({ path })),
+    path: "/api/v1/res0/12345",
+    connections: 100,
+    pipelining: 10,
+    duration: 5,
+    env: { BENCH_ROUTES: "6" },
+  },
   "routes-200-param": {
     requests: scaleProbePaths(200, 10).map((path) => ({ path })),
     path: "/api/v1/res0/12345",

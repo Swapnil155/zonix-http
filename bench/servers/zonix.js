@@ -40,10 +40,17 @@ app.post("/echo", parseJSON({ limit: "1mb" }), (req, res) => {
 });
 
 // Only registered for the routes-200-param scenario (BENCH_ROUTES).
+// Mirrors the fastify variant so the comparison stays symmetric.
+const scaleHandler = (req, res) => {
+  res.json({ id: req.params.id });
+};
 for (const route of scaleRoutes()) {
-  app.get(route.pattern, (req, res) => {
-    res.json({ id: req.params.id });
-  });
+  const handler = process.env.BENCH_SHARED_HANDLER
+    ? scaleHandler
+    : (req, res) => {
+        res.json({ id: req.params.id });
+      };
+  app.get(route.pattern, handler);
 }
 
 // /no-such-route is deliberately absent: that is the 404 scenario.

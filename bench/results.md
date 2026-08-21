@@ -526,3 +526,138 @@ serialization on either side.
 
 All four servers were verified to return byte-identical responses on the new
 endpoints before any measurement was taken.
+
+---
+
+# W2-V — verification of the routes-200-param win
+
+The Session 5 gate: the 1.40× result may not be published without a named
+mechanism, a published scenario spec, a control isolating table size, and
+confirmation that the win survives that control. All four are below.
+
+**Verdict: W2-V PASSES, and the claim gets narrower and more accurate.**
+The win is real and mechanically explained, but it is _conditional on table
+size_: at 6 routes Fastify is slightly ahead, and zonix's advantage only appears
+once the table crosses ~50–100 routes.
+
+## 1. Scenario spec (published alongside every use of these numbers)
+
+|                    |                                                                                                                                                                                              |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Route shape        | `GET /api/v1/res{i}/:id`, `i` = 0…N−1 — 4 segments, one trailing param                                                                                                                       |
+| Registration order | ascending `i`, after the six fixed scenario routes                                                                                                                                           |
+| Table sizes        | 6 (control) and 200 (headline); sweep 6→400 in `bench/scaling.mjs`                                                                                                                           |
+| Requested paths    | ten positions spread evenly across the table (`res0`, `res20`, … `res180`), cycled by autocannon                                                                                             |
+| Why spread         | a linear-scan router costs more the later a route sits; probing one position flatters one design or the other                                                                                |
+| Load               | 100 connections, pipelining 10, 5s measured after 2s warmup                                                                                                                                  |
+| Method             | `bench/interleave.mjs`, rotating framework order, 5 rounds, median                                                                                                                           |
+| Fastify config     | `Fastify({ logger: false })` — `logger: false` is Fastify's own default, so this is a stock instance. No custom router, no `constraints`, no `caseSensitive`/`ignoreTrailingSlash` overrides |
+| Versions           | fastify 5.12.1, find-my-way 9.8.0, express 4.21.2, Node v22.20.0                                                                                                                             |
+| Handlers           | one closure per route in every framework (symmetric); a shared-closure variant is available via `BENCH_SHARED_HANDLER` and was tested — see below                                            |
+
+## 2. The control: table size isolated
+
+The original comparison divided `routes-200-param` by `hello`, which changes
+three variables at once — table size, static-vs-param matching, and path depth
+(1 segment vs 4). `routes-6-param` is `routes-200-param` with **only** the table
+size changed: same shape, same depth, same param, same probe distribution.
+
+Interleaved, rotating order, 5 rounds, quiet machine (CPU preflight OK):
+
+| Scenario         |   zonix | express | fastify | zonix vs fastify |
+| ---------------- | ------: | ------: | ------: | ---------------: |
+| routes-6-param   | 117,254 |  22,315 | 120,422 |        **0.97×** |
+| routes-200-param | 115,994 |  20,053 |  82,720 |        **1.40×** |
+
+Cost of going 6 → 200 routes, with request type and depth held constant:
+
+|         | 6 routes | 200 routes |     change |
+| ------- | -------: | ---------: | ---------: |
+| zonix   |  117,254 |    115,994 |  **−1.1%** |
+| express |   22,315 |     20,053 |     −10.1% |
+| fastify |  120,422 |     82,720 | **−31.3%** |
+
+The earlier headline said Fastify lost 34.8%; with the confound removed it is
+**31.3%**. The conclusion is unchanged, and now it is attributable to one
+variable.
+
+**At 6 routes Fastify is ahead (zonix 0.97×).** The 1.40× is not a general
+routing win — it is entirely the difference in how the two handle a larger
+table.
+
+## 3. Mechanism
+
+Flamegraphs of Fastify at both sizes (`npm run profile -- --framework=fastify
+--scenario=routes-200-param`):
+
+| Frame                         |  6 routes | 200 routes |
+| ----------------------------- | --------: | ---------: |
+| `nextTick @ task_queues`      | **0.96%** | **21.94%** |
+| `find @ find-my-way/index.js` |     1.20% |      1.40% |
+| `writev`                      |    46.37% |     34.84% |
+| `(garbage collector)`         |     1.78% |      1.14% |
+
+**The router lookup is not the cost.** find-my-way's `find` is ~1.2–1.4% at both
+sizes; the tree walk scales fine. What grows is `process.nextTick`, from 1% to
+22% of self time.
+
+Four candidate explanations were tested, and three were falsified:
+
+| Hypothesis                                                           | Test                                                                          | Result                                                                     |
+| -------------------------------------------------------------------- | ----------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| 200 distinct handler closures make shared call sites megamorphic     | register all scale routes against one shared closure (`BENCH_SHARED_HANDLER`) | **Rejected** — 78,024 rps / 20.03% nextTick vs 78,848 / 20.45%. No change. |
+| Cost comes from the variety of paths requested (router cache thrash) | 200 routes, request a **single** path                                         | **Rejected** — 85,056 rps, still ~30% down from the 6-route figure         |
+| Schema compilation over 200 routes                                   | fastify vs fastify-schema at 200 routes                                       | **Rejected** — 96,480 vs 97,760, within noise                              |
+| GC pressure from a larger live heap                                  | GC self-time at both sizes                                                    | **Rejected** — GC share _falls_, 1.78% → 1.14%                             |
+
+What survives, from `bench/scaling.mjs` (one requested path throughout, so only
+the registered count varies):
+
+| framework |       6 |      25 |      50 |        100 |     200 |     400 |
+| --------- | ------: | ------: | ------: | ---------: | ------: | ------: |
+| fastify   | 120,344 | 125,992 | 125,232 | **87,792** |  82,160 |  82,960 |
+| zonix     | 119,160 | 114,032 | 116,472 |    114,240 | 114,848 | 117,424 |
+
+**It is a cliff, not a slope.** Fastify is flat to 50 routes, drops ~30% between
+50 and 100, and is flat again to 400. zonix is flat across the whole range.
+
+So the mechanism, stated at the level the evidence supports:
+
+> Fastify pays a per-request cost that scales with the number of routes
+> **registered** — not with the number requested, not with the router walk, and
+> not with anything the request itself contains. It appears abruptly between 50
+> and 100 routes and then plateaus, and it surfaces as `process.nextTick`
+> self-time. A step change that then flattens is the signature of a V8
+> optimization limit being crossed (an inline cache going megamorphic, or a
+> function crossing an inlining budget and being deoptimized) somewhere in
+> Fastify's per-request path once the route table is large enough.
+
+**What is not claimed:** the root cause inside Fastify. The falsified list above
+rules out the obvious candidates, but identifying the exact call site would take
+a V8 deopt trace against Fastify's internals, and a Fastify maintainer would be
+better placed to explain it. This is Fastify 5.12.1 on Node 22.20.0; a different
+version may behave differently.
+
+**zonix's own property is the publishable half, and it is simple:** per-request
+cost is independent of route-table size from 6 to 400 routes (114–119k
+throughout). That is what a segment-keyed radix tree with an exact-match map in
+front is supposed to give, and it is what it gives.
+
+## 4. The claim, restated for publication
+
+Not "zonix is 1.40× Fastify". The honest form:
+
+> On a 200-route param-heavy table, zonix serves ~1.4× Fastify's throughput
+> (115,994 vs 82,720 rps, interleaved, 5 rounds, non-overlapping). At 6 routes
+> the two are at parity (0.97×). The difference is table size: zonix's
+> per-request cost is flat from 6 to 400 routes, while Fastify's steps down
+> ~30% between 50 and 100 routes and stays there. Measured on one machine with
+> a ~5% noise floor; the mechanism inside Fastify is characterized but not
+> root-caused.
+
+## 5. Note on cross-session drift
+
+`routes-200-param` read zonix 135,309 in the previous session and 115,994 here —
+a 14% absolute drift on the same build, on a machine both times stamped CPU-OK.
+**The ratio reproduced exactly** (1.40× both times). That is the case for D2 in
+one line: ratios within a session are stable, absolutes across sessions are not.

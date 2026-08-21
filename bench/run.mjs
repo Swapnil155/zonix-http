@@ -76,6 +76,23 @@ const SCENARIOS = [
     warmup: 2,
     expect: 200,
   },
+  // W2-V control. The headline 6-route-vs-200-route comparison used `hello`
+  // (static, 1 segment) against routes-200-param (param, 4 segments), which
+  // conflates three variables at once: table size, static-vs-param matching, and
+  // path depth. This scenario is routes-200-param with ONLY the table size
+  // changed - same route shape, same depth, same param, same probe
+  // distribution - so dividing the two isolates table size alone.
+  {
+    id: "routes-6-param",
+    requests: scaleProbePaths(6, 10).map((path) => ({ path })),
+    path: "/api/v1/res0/12345",
+    connections: 100,
+    pipelining: 10,
+    duration: 5,
+    warmup: 2,
+    expect: 200,
+    env: { BENCH_ROUTES: "6" },
+  },
   // W2: routing at a realistic table size. A 2-route bench hides routing
   // entirely; 200 routes is where a radix walk and a linear scan diverge.
   // Requests cycle across ten positions in the table, so the number is not an

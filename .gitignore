@@ -13,5 +13,6 @@ bench/.bi1.json
 bench/.calibration.json
 bench/.s4.json
 bench/.s4b.json
+bench/.w2v.json
 *.log
 .DS_Store

@@ -37,8 +37,14 @@ app.get("/file/large", sendFile(LARGE));
 // Fastify parses JSON bodies itself; there is no middleware to scope.
 app.post("/echo", echoSchema, async (req) => req.body);
 
+// BENCH_SHARED_HANDLER registers every scale route against ONE closure, to
+// test whether per-route closure identity (not table size) drives the cost.
+const scaleHandler = async (req) => ({ id: req.params.id });
 for (const route of scaleRoutes()) {
-  app.get(route.pattern, idSchema, async (req) => ({ id: req.params.id }));
+  const handler = process.env.BENCH_SHARED_HANDLER
+    ? scaleHandler
+    : async (req) => ({ id: req.params.id });
+  app.get(route.pattern, idSchema, handler);
 }
 
 await app.listen({ port: Number(process.env.PORT ?? 3003), host: "127.0.0.1" });

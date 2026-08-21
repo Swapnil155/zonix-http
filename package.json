@@ -28,7 +28,8 @@
     "example": "tsx examples/basic.ts",
     "profile": "npm run build && node bench/profile.mjs",
     "micro": "tsx bench/micro.ts",
-    "micro:serializer": "tsx bench/serializer.ts"
+    "micro:serializer": "tsx bench/serializer.ts",
+    "bench:scaling": "node bench/scaling.mjs"
   },
   "keywords": [
     "http",
