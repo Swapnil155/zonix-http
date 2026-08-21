@@ -427,14 +427,19 @@ describe("req.is", () => {
   });
 
   test("wildcards match", () => {
-    assert.equal(typeIs(body("application/json"), ["*/*"]), "*/*");
-    assert.equal(typeIs(body("application/json"), ["application/*"]), "application/*");
-    assert.equal(typeIs(body("application/json"), ["*/json"]), "*/json");
+    // A wildcard pattern returns the MATCHED type, not the pattern - so the
+    // caller learns what actually arrived. Verified against the real `type-is`
+    // in the differential test below; the Express docs say otherwise and are
+    // wrong.
+    assert.equal(typeIs(body("application/json"), ["*/*"]), "application/json");
+    assert.equal(typeIs(body("application/json"), ["application/*"]), "application/json");
+    assert.equal(typeIs(body("application/json"), ["*/json"]), "application/json");
     assert.equal(typeIs(body("text/html"), ["application/*"]), false);
   });
 
   test("a +suffix matches structured syntax types", () => {
-    assert.equal(typeIs(body("application/vnd.api+json"), ["+json"]), "+json");
+    // Same rule as wildcards: a "+suffix" pattern returns the matched type.
+    assert.equal(typeIs(body("application/vnd.api+json"), ["+json"]), "application/vnd.api+json");
     assert.equal(typeIs(body("application/json"), ["+json"]), false);
   });
 
@@ -519,7 +524,7 @@ describe("compat accessors over a real request", () => {
       .post("/is")
       .set("Content-Type", "application/json")
       .send("{}")
-      .expect(200, { json: "json", html: false, any: "*/*" });
+      .expect(200, { json: "json", html: false, any: "application/json" });
 
     // A GET with no body at all: null, not false.
     await request(app.server).get("/is").expect(200, { json: null });

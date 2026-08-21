@@ -239,7 +239,16 @@ export function typeIs(
 
   for (const candidate of types) {
     if (typeof candidate !== "string" || candidate.length === 0) continue;
-    if (matchesType(actual, candidate)) return candidate;
+    if (!matchesType(actual, candidate)) continue;
+    // A wildcard or suffix pattern returns the *matched* type, not the pattern:
+    // `req.is("application/*")` on a JSON request gives "application/json", so
+    // the caller learns what actually arrived rather than what they asked for.
+    //
+    // Note this contradicts the Express documentation, which states
+    // `req.is('application/*') // => 'application/*'`. The installed
+    // `type-is` returns `val` for these patterns, and the differential test
+    // proves real Express does too. Rule 8: the oracle outranks the docs.
+    return candidate.startsWith("+") || candidate.includes("*") ? actual : candidate;
   }
   return false;
 }
@@ -267,10 +276,60 @@ function normalizeContentType(header: string | undefined): string | undefined {
   const raw = semicolon === -1 ? header : header.slice(0, semicolon);
   const value = raw.replace(/^[ \t]+|[ \t]+$/g, "").toLowerCase();
   if (value.length === 0) return undefined;
-  // Must be a syntactically plausible type/subtype.
+  // Exactly one slash, and both halves must be RFC 7230 tokens. Checking only
+  // for "a slash somewhere" was too lax: it let "a/b/c" through, which then
+  // matched `req.is("*/*")` and handed the caller a bogus type. The real
+  // `type-is` parses with `content-type`, which rejects it; the differential
+  // test caught the difference.
   const slash = value.indexOf("/");
   if (slash <= 0 || slash === value.length - 1) return undefined;
+  if (!isName(value, 0, slash, false)) return undefined;
+  if (!isName(value, slash + 1, value.length, true)) return undefined;
   return value;
+}
+
+/**
+ * Is `value[start, end)` a legal RFC 6838 type or subtype name?
+ *
+ * This is `media-typer`'s rule, which `type-is` parses with and which is
+ * markedly stricter than an RFC 7230 token: the name must **start** with an
+ * alphanumeric, `.` and `+` are legal only in the subtype, and `*`, `'`, `|`,
+ * `~`, `%` and backtick are not legal at all. Length is capped at 127.
+ *
+ * The strictness is the point. A laxer check let malformed headers such as
+ * `-/99y` through, where they matched a wildcard pattern and handed the caller
+ * a nonsense type; the seeded fuzz differential against `type-is` found them.
+ *
+ * A linear char-code scan rather than a character class, per decision 11.
+ *
+ * @param allowDotPlus subtypes may contain `.` and `+`; types may not.
+ */
+function isName(value: string, start: number, end: number, allowDotPlus: boolean): boolean {
+  const length = end - start;
+  if (length < 1 || length > 127) return false;
+
+  for (let i = start; i < end; i++) {
+    const c = value.charCodeAt(i);
+    // 0-9 or a-z; the caller has already lowercased.
+    if ((c >= 0x30 && c <= 0x39) || (c >= 0x61 && c <= 0x7a)) continue;
+    // The first character must be alphanumeric; the rest may be punctuation.
+    if (i === start) return false;
+    // ! # $ & ^ _ -
+    if (
+      c === 0x21 ||
+      c === 0x23 ||
+      c === 0x24 ||
+      c === 0x26 ||
+      c === 0x5e ||
+      c === 0x5f ||
+      c === 0x2d
+    ) {
+      continue;
+    }
+    if (allowDotPlus && (c === 0x2e || c === 0x2b)) continue;
+    return false;
+  }
+  return true;
 }
 
 /** Expand `req.is("json")`-style shorthands, then match with wildcard rules. */

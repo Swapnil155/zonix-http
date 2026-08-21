@@ -9,6 +9,7 @@ import {
   formatLinks,
   inferSendType,
   isBodyless,
+  setCharsetUtf8,
   varyValue,
   withCharset,
 } from "./compat/response.js";
@@ -102,6 +103,14 @@ export class ZonixResponse extends ServerResponse<ZonixRequest> {
     // self-time 3.10% -> 3.39% on the hello profile), so the encode stays here.
     const body = Buffer.from(JSON.stringify(data === undefined ? null : data), "utf8");
     if (this.hasHeader("Content-Type")) {
+      // A caller-set type is kept, but the charset is forced to utf-8 because
+      // that is what was just encoded. Express does the same via send(); the
+      // differential test pins it. The hot path below never reaches here — its
+      // constant already carries the charset, so this costs nothing per request.
+      const existing = this.getHeader("Content-Type");
+      if (typeof existing === "string") {
+        this.setHeader("Content-Type", setCharsetUtf8(existing));
+      }
       this.setHeader("Content-Length", body.byteLength);
     } else {
       // One writeHead instead of two setHeader calls plus the implicit head
@@ -121,9 +130,26 @@ export class ZonixResponse extends ServerResponse<ZonixRequest> {
    *
    * The location is URL-encoded, so a newline in a user-supplied redirect
    * target becomes `%0A` rather than splitting the response.
+   *
+   * Two argument orders are accepted. `redirect(url, code)` is the zonix
+   * signature; `redirect(code, url)` is Express's documented overload, which
+   * exists because handlers are copy-pasted out of its docs in that form. The
+   * Phase 6 exit test caught its absence — the surface is only compatible if
+   * the shapes people actually write are the shapes it accepts.
    */
-  redirect(location: string, code = 302): void {
+  redirect(location: string, code?: number): void;
+  redirect(code: number, location: string): void;
+  redirect(a: string | number, b?: string | number): void {
     this.#assertOpen(this.redirect);
+    const location = typeof a === "number" ? (b as string) : a;
+    const code = typeof a === "number" ? a : ((b as number | undefined) ?? 302);
+    if (typeof location !== "string") {
+      throw frameworkError(
+        "res.redirect() requires a URL: redirect(url), redirect(url, code) or redirect(code, url)",
+        this.redirect,
+        ErrorCode.INVALID_ARGUMENT,
+      );
+    }
     this.location(location);
     this.statusCode = code;
     this.setHeader("Content-Length", 0);
@@ -279,7 +305,18 @@ export class ZonixResponse extends ServerResponse<ZonixRequest> {
       this.json(plan.value);
       return;
     }
-    if (plan.type !== undefined) this.setHeader("Content-Type", plan.type);
+    if (plan.type !== undefined) {
+      this.setHeader("Content-Type", plan.type);
+    } else if (plan.kind === "string") {
+      // A string is written as utf-8, so the declared type says utf-8 —
+      // whatever that type is. Express applies this to every type, including
+      // ones where it reads oddly (`image/png; charset=utf-8`); matching it is
+      // the point of a compat surface. Buffers keep the type untouched.
+      const existing = this.getHeader("Content-Type");
+      if (typeof existing === "string") {
+        this.setHeader("Content-Type", setCharsetUtf8(existing));
+      }
+    }
     this.#finish(plan.kind === "buffer" ? plan.value : Buffer.from(plan.value, "utf8"));
   }
 

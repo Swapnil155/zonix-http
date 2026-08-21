@@ -225,12 +225,15 @@ describe("res.set / get / append / type", () => {
     assert.equal((await request(app.server).get("/c")).headers["content-type"], "application/pdf");
   });
 
-  test("an unknown type throws instead of writing 'false'", async () => {
+  test("an unknown type falls back to application/octet-stream", async () => {
+    // Locked decision 11 ("Unknown -> application/octet-stream", naming
+    // res.type) and real Express both say fall back. An earlier version threw
+    // here; the differential test against Express caught it.
     const app = makeApp();
     app.get("/t", (_req, res) => res.type("nonsense").send("x"));
-    app.handleErr((_err, _req, res) => res.status(500).json({ handled: true }));
 
-    await request(app.server).get("/t").expect(500, { handled: true });
+    const res = await request(app.server).get("/t").expect(200);
+    assert.equal(res.headers["content-type"], "application/octet-stream; charset=utf-8");
   });
 });
 

@@ -661,3 +661,120 @@ Not "zonix is 1.40× Fastify". The honest form:
 a 14% absolute drift on the same build, on a machine both times stamped CPU-OK.
 **The ratio reproduced exactly** (1.40× both times). That is the case for D2 in
 one line: ratios within a session are stable, absolutes across sessions are not.
+
+---
+
+# T-0 Turbo spike — official adjudication on the reference rig
+
+_Session 7, Aug 2026. Node 22.20.0, 24 cores, cpu preflight **OK** (5.0–5.9%
+system-wide across three samples). Spike code run **unmodified** as delivered in
+`bench/servers/spike/`. No file I/O in this scenario, so the `open()` regime does
+not apply._
+
+CLAUDE.md M4 records the in-container result (12.63× corked, 1.78× uncorked) and
+states plainly that "container absolutes are meaningless", "12.6× is not a
+claimable number", and "official adjudication is the same spike re-run, paired,
+on the reference rig". This is that run.
+
+## 1. Headline — both configurations clear the kill bar
+
+| Config          | raw `node:http` |     turbo | ratio (median of 5) |     per-pair range | container |
+| --------------- | --------------: | --------: | ------------------: | -----------------: | --------: |
+| p=16, C=6       |         150,848 | 1,606,115 |          **10.78×** | 10.37× – 10.84×    |    12.63× |
+| p=1, C=6        |          84,167 |   144,325 |           **1.71×** |  1.67× – 1.78×     |     1.78× |
+
+**The prediction in M4 held.** The transferable signal was named in advance as
+the p=1 ratio, and it transferred to within 4% (1.78× → 1.71×) across a 1-core
+container and a 24-core workstation. The corked figure fell from 12.63× to
+10.78×, exactly as the colocation-amplification caveat predicted. Calling the
+p=1 number the real one, before seeing this rig, was the right call.
+
+Raw `node:http` reading 150,848 rps at p=16 is also a useful sanity check: it
+sits right where this rig's hello-world numbers live (142–149k for zonix and
+Fastify), so the baseline is not a strawman.
+
+## 2. Correctness first — the gauntlet, re-created and re-run
+
+CLAUDE.md records that the spike "passed a 5-test correctness gauntlet" in the
+container, but the gauntlet was not delivered with the code. It is now
+`bench/servers/spike/gauntlet.mjs`, and it passes **5/5** here:
+
+```
+PASS  single request -> 200 with body
+PASS  pipelined x3 in one packet -> 3 responses
+PASS  byte-dribbled request -> exactly 1 response
+PASS  unsupported method -> 405 + close
+PASS  oversize headers -> 431 + close
+```
+
+This is not ceremony. A server that answers fast but wrongly is not a data
+point, and the byte-dribble case in particular is the one that would fail if the
+terminator scan mishandled a request split across packets — which would have
+made every throughput number above meaningless.
+
+## 3. The finding the container could not have produced: the ratio depends on load shape
+
+Sweeping connection count at p=1 (3 pairs each):
+
+| C   | raw    | turbo   | ratio      |
+| --- | -----: | ------: | ---------: |
+| 1   | 37,896 |  43,896 | **1.16×**  |
+| 2   | 72,465 | 109,449 |     1.51×  |
+| 6   | 84,167 | 144,325 |     1.71×  |
+| 12  | 90,721 | 144,874 |     1.60×  |
+| 24  | 92,963 | 151,209 |     1.63×  |
+
+**At C=1 the spike fails its own kill bar (1.16× < 1.30×).** That is not a
+defect in the spike; it is a statement about what Turbo actually buys. With one
+connection and no pipelining there is exactly one request in flight, and the
+measurement is dominated by loopback round-trip latency that both servers pay
+identically. Server CPU is a small slice of that round trip, so saving CPU
+barely moves the number.
+
+As concurrency rises the server becomes throughput-bound rather than
+latency-bound, per-request CPU starts to dominate, and the ratio expands to its
+true value and plateaus around 1.6×.
+
+**So the honest characterization is: Turbo is a throughput win, not a latency
+win.** A single sequential client sees ~16%. A loaded server sees ~1.6×. Both
+are true; publishing only the second would be the kind of measurement this repo
+keeps catching other people making.
+
+## 4. Confirming the load generator is not the ceiling
+
+A single-threaded Node client could easily be the real bottleneck at 150k rps,
+which would make every ratio above an artifact. Tested directly by driving one
+server with 1, 2 and 3 independent client **processes** and summing:
+
+| clients (C=12 each) | raw `node:http` | turbo   |
+| ------------------: | --------------: | ------: |
+| 1                   |          90,494 | 139,347 |
+| 2                   |          91,744 | 149,584 |
+| 3                   |          89,098 | 152,188 |
+
+Raw is flat — it is genuinely server-bound at ~91k. Turbo rises ~9% from one
+client to three and then flattens, so a single client mildly understates it; its
+true ceiling is ~152k. **Server-bound ceiling to server-bound ceiling: 152,188 /
+90,494 = 1.68×**, which agrees with the C=12/C=24 sweep. The single-client
+numbers are a floor, not an inflation.
+
+## 5. Verdict
+
+**T-0 PASSES on the reference rig. Turbo lives; the design doc is unlocked.**
+
+The claimable numbers, with their conditions attached:
+
+- **~1.6–1.7× raw `node:http` on throughput**, under concurrency, without
+  pipelining. This is the number that should drive the design decision — it is
+  pure per-request lifecycle saving (no `IncomingMessage`/`ServerResponse`
+  construction, no full header parse, no stream machinery).
+- **~10.8× with pipelining depth 16**, which is real but describes a workload
+  (deeply pipelined clients) that few production HTTP/1.1 clients generate.
+  Never publish it as "Turbo is 10× faster".
+- **~1.16× for a single sequential client.** Turbo does not make an idle server
+  answer faster.
+
+The production question is unchanged and now has a number attached to it: the
+compat shim must retain ≥ 1.2× of the ~1.65× throughput headroom, i.e. the shim
+may consume at most ~73% of the saving before Turbo stops being worth its
+parsing-surface risk. That is the design doc's budget.

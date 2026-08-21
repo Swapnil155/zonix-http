@@ -1,5 +1,5 @@
 import { ErrorCode, frameworkError } from "../errors/index.js";
-import { resolveType } from "../http/mime.js";
+import { DEFAULT_MIME, resolveType } from "../http/mime.js";
 
 /**
  * Express `res` semantics, as pure functions.
@@ -76,22 +76,77 @@ export function withCharset(value: string): string {
   return UTF8_TYPES.test(value) ? `${value}; charset=utf-8` : value;
 }
 
+/**
+ * Force `charset=utf-8` onto a content-type, replacing any charset already
+ * there.
+ *
+ * This is Express's `setCharset`, and it fires whenever a **string** body is
+ * written — `res.send("hi")` encodes as UTF-8, so it says so. It applies to
+ * every type, not just the textual ones: real Express answers
+ * `res.type("png"); res.send("...")` with `image/png; charset=utf-8`. Buffer
+ * bodies are left alone, because their encoding is the caller's business.
+ *
+ * Distinct from {@link withCharset}, which only *adds* a charset and only for
+ * the types that want one. Both exist in Express and they are not the same
+ * rule; the differential test pins each.
+ *
+ * Parameters are walked with a scanner rather than `split(";")` because a
+ * quoted parameter value may legally contain a semicolon (`boundary="a;b"`),
+ * and splitting would corrupt it.
+ */
+export function setCharsetUtf8(value: string): string {
+  const semicolon = indexOfUnquoted(value, ";");
+  if (semicolon === -1) return `${value}; charset=utf-8`;
+
+  const type = value.slice(0, semicolon);
+  const kept: string[] = [];
+  let position = semicolon + 1;
+  while (position <= value.length) {
+    let end = indexOfUnquoted(value, ";", position);
+    if (end === -1) end = value.length;
+    const parameter = value.slice(position, end);
+    position = end + 1;
+    if (parameter.trim().length === 0) continue;
+    const equals = parameter.indexOf("=");
+    const name = (equals === -1 ? parameter : parameter.slice(0, equals)).trim().toLowerCase();
+    if (name === "charset") continue; // dropped, then re-added below
+    kept.push(parameter.trim());
+  }
+  return [type, ...kept, "charset=utf-8"].join("; ");
+}
+
+/** Index of `char` outside any quoted string, or -1. */
+function indexOfUnquoted(value: string, char: string, from = 0): number {
+  let quoted = false;
+  for (let i = from; i < value.length; i++) {
+    const c = value[i];
+    if (quoted) {
+      if (c === "\\") i++;
+      else if (c === '"') quoted = false;
+      continue;
+    }
+    if (c === '"') quoted = true;
+    else if (c === char) return i;
+  }
+  return -1;
+}
+
 /** Normalize what `res.type()` accepts into a full content-type. */
 export function contentTypeFor(value: string, fn: (...a: never[]) => unknown): string {
   if (typeof value !== "string" || value.length === 0) {
     throw frameworkError("res.type() requires a type or extension", fn, ErrorCode.INVALID_ARGUMENT);
   }
-  const resolved = resolveType(value);
-  if (resolved === undefined) {
-    // Express writes the literal string "false" here. Refusing is more useful
-    // than emitting a header that is definitely wrong.
-    throw frameworkError(
-      `res.type(): unknown type or extension ${JSON.stringify(value)}`,
-      fn,
-      ErrorCode.UNKNOWN_MIME,
-    );
-  }
-  return withCharset(resolved);
+  // Unknown falls back to application/octet-stream, per locked decision 11
+  // ("Backs res.type ... Unknown -> application/octet-stream") and per the
+  // oracle: real Express resolves through mime's default type and answers
+  // `application/octet-stream` for an unrecognised extension.
+  //
+  // An earlier version threw here, on the reasoning that refusing beats
+  // emitting a wrong header. The differential test killed it: that reasoning
+  // disagreed with both the spec and the package being compat-tested against,
+  // and a compat surface does not get to be opinionated about a case its own
+  // spec has already decided.
+  return withCharset(resolveType(value) ?? DEFAULT_MIME);
 }
 
 /** How `res.append` merges with what is already set. */

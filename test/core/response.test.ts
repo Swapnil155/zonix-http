@@ -284,7 +284,10 @@ describe("res.attachment", () => {
     // Only `filename=`. The earlier implementation also emitted a redundant
     // `filename*=`, which Express does not do for a name that needs no encoding.
     assert.equal(res.headers["content-disposition"], 'attachment; filename="report.pdf"');
-    assert.equal(res.headers["content-type"], "application/pdf");
+    // The charset is Express's, not an accident: a string body is written as
+    // utf-8, so the declared type says so - even for application/pdf. Verified
+    // against real Express in test/compat/express-differential.test.ts.
+    assert.equal(res.headers["content-type"], "application/pdf; charset=utf-8");
   });
 
   test("encodes non-ASCII filenames and cannot inject a header", async () => {
