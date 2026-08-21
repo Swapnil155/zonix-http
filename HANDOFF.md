@@ -1,76 +1,84 @@
 # HANDOFF
 
-**Phase:** 6 — `req` compat surface landed. Next: the `res` compat surface.
+**Phase:** 6 — `req` and `res` compat surfaces landed. Next: the Phase 6 exit test.
 
 ## Done this session
 
-**1. Rule 7 regime preflight** (`bench/regime.mjs`, wired into `run.mjs`, `interleave.mjs`, `ab.mjs`).
-Measures `open`+`read`+`close` on the real fixture before any file scenario and stamps `DEGRADED-REGIME`
-below 50k opens/sec. Also reports reads through an open fd, because the ratio is what separates a filter
-driver from a slow disk. **This machine currently reads 3,489 opens/sec — still degraded**, so file
-scenarios stay unadjudicable until the AV exclusion is in place.
+**1. W2-V — PASSES, and the claim is now narrower.** The control (`routes-6-param`:
+`routes-200-param` with _only_ the table size changed) shows the win is entirely a
+table-size effect:
 
-**A second preflight came out of a mistake.** The first run of the new scenarios went through the
-sequential matrix and reported zonix/hello at 80,787 against 145,779 an hour earlier, Express down 40%,
-and Fastify — benched last — untouched. Background agents were eating CPU. The harness now samples
-system-wide utilization from `os.cpus()` and stamps `BUSY-MACHINE` above 20%. (A spin loop was tried and
-rejected: one thread on a 24-core box takes an idle core and reports all-clear.)
+| Scenario         |   zonix | express | fastify | vs fastify |
+| ---------------- | ------: | ------: | ------: | ---------: |
+| routes-6-param   | 117,254 |  22,315 | 120,422 |  **0.97×** |
+| routes-200-param | 115,994 |  20,053 |  82,720 |  **1.40×** |
 
-**2. Fastify schema question — settled.** `bench/servers/fastify.js` declared **no** response schema, so
-`fast-json-stringify` has never been active in any recorded matrix. Added `bench/servers/fastify-schema.js`.
-Measured, **schema compilation is worth ~1%, not the gap** — so D5's `serialized()` wiring is an API
-feature, not a performance play. Adjust W3 expectations accordingly.
+6 → 200 routes costs zonix **1.1%**, Express 10.1%, Fastify **31.3%** (the earlier
+34.8% was inflated by comparing against `hello`, which changed three variables).
+**At 6 routes Fastify is ahead** — the publishable claim says so.
 
-**3. New scenarios — first numbers** (interleaved, quiet machine, 5 rounds):
+Mechanism: find-my-way's `find` is 1.2–1.4% at _both_ sizes, so it is not the router
+walk. `process.nextTick` goes **0.96% → 21.94%**. Four candidates were tested and
+rejected: distinct handler closures, requested-path variety, schema compilation, GC.
+`bench/scaling.mjs` shows a **cliff, not a slope** — Fastify flat to 50 routes, −30%
+between 50 and 100, flat again to 400; zonix flat 6→400. The root cause inside
+Fastify is **not** claimed. Full write-up and scenario spec in `bench/results.md`.
 
-| Scenario         |   zonix | express | fastify | fastify-schema | vs fastify |
-| ---------------- | ------: | ------: | ------: | -------------: | ---------: |
-| hello            | 142,963 |  26,024 | 147,904 |        148,544 |      0.97× |
-| routes-200-param | 135,309 |  22,360 |  96,480 |         97,760 |  **1.40×** |
-| post-json-echo   |  62,134 |  16,633 |  62,787 |         62,890 |      0.99× |
+**2. D6 — `req.host`** returns the host _with_ its port (Express 5); `hostname` is the
+port-stripped form. `getHostname` now derives from `getHost` so trust handling cannot
+drift between them.
 
-**W2 is met on `routes-200-param`: 1.40× Fastify, 6.05× Express**, distributions non-overlapping across all
-five rounds. From a 6-route table to 200, zonix loses 5.4% and Fastify loses 34.8%. **Fastify's degradation
-is not profiled and is not claimed as mechanism** — flamegraph that before publishing anything.
+**3. MIME table** grown to ~106 curated types with `resolveType()`, which `res.type()`
+needs.
 
-**4. Phase 6 `req` surface.** `get`/`header`, `originalUrl`, `baseUrl`, `protocol`, `secure`, `hostname`,
-`subdomains`, `ip`, `ips`, `xhr`, `is()`, plus `trustProxy`/`subdomainOffset` options and a zero-dependency
-proxy-addr equivalent (`lib/http/proxy.ts`: CIDR matching, loopback/linklocal/uniquelocal presets, IPv4 and
-IPv6, IPv4-mapped addresses). **237 tests green** on Node 20.20.2 and 22.20.0 (+72).
+**4. `Content-Disposition` was wrong and is fixed.** The Phase 3 hand-rolled header
+differed from the real package on **14 of 15** filenames: it emitted `filename*` for
+plain ASCII names, _deleted_ quotes instead of escaping them, left the path in the
+header, and produced a malformed `filename*=UTF-8'''name'`. `lib/http/content-disposition.ts`
+implements RFC 6266/5987 properly and is pinned by a differential test against
+`content-disposition@0.5.4` (30 curated names + 2000 seeded fuzz names).
 
-## Phase 6 notes worth keeping
+**5. Phase 6 `res` surface**: `send`, `set`/`header`, `get`, `append`, `type`,
+`vary`, `links`, `location`, `sendStatus`, `locals`, `cookie`, `clearCookie`, plus
+`cookies/serialize.ts` and `cookies/sign.ts`. **358 tests green** on Node 20.20.2 and
+22.20.0; regression gate **PASS** (+0.31%).
 
-- **Zero per-request cost.** Settings are compiled once and hung on the `http.Server`; requests reach them
-  via `req.socket.server`. Every accessor is a getter caching into one lazily-created object, so a request
-  that touches none of them allocates nothing and never enters `compat/`.
-- **Regression gate (rule 2): PASS.** Same-session paired A/B vs the pre-Phase-6 build, hello-world, 5 pairs,
-  run three times: +0.07%, +0.42%, −1.44% — all inside the 2% budget and consistent with zero, which is what
-  lazy accessors should cost. `bench/ab.mjs --mode=gate` now reports PASS/FAIL against that budget instead of
-  the optimization keep/revert wording.
-- **The research caught bugs the obvious implementation would have shipped**, all now covered by tests:
-  `"[::1]:3000".split(":")[0]` is `"["`, not the host; `req.ips` must be truncated at the first _untrusted_
-  hop (my first version returned the whole spoofable header); `is()` returns the matched string, not `true`;
-  `+json` expands to `*/*+json`; `urlencoded` and `multipart` are hard-coded, not MIME lookups; `referer`
-  and `referrer` alias with `||` so an empty `referer` yields `""`; `__proto__` must not escape into the
-  prototype chain.
+## Things worth remembering
+
+- **Cookie signing is wire-compatible** with `cookie-signature`, verified both
+  directions. Standard base64, padding stripped (`base64url` would break interop);
+  comparison is `timingSafeEqual`, not the reference `==`.
+- **`clearCookie` applies the expiry after the caller's options**, so passing `maxAge`
+  cannot turn a clear into a renewal — an Express 4 footgun.
+- **Cookie/header validators are linear char scans, not regexes.** Character-class
+  regexes over these ranges (`]`, `\`, quotes, NUL) were written wrong twice by
+  escaping accidents before this was switched; decision 11 wants linear parsing anyway.
+- **`res.send(number)` throws** per decision 13, pointing at `sendStatus`.
+- **A benchmark's own tooling can lie**: the CRLF test initially "failed" because the
+  injected header name appears inside the correctly _encoded_ value. Assert on the
+  header line, not the substring.
 
 ## Deferred, with reasons
 
-- **`accepts()` family, `fresh`/`stale`, `range()`** — the Phase 6 bullet lists them, but the authoritative
-  tree tags their machinery **[P7]** (`negotiation/`, `http/fresh.ts`, `http/range.ts`). Building them now
-  would mean inventing a negotiator ahead of its phase. They land in Phase 7.
-- **`req.host`** — Express 4 and 5 disagree (4: alias of `hostname`; 5: includes the port). Shipping either
-  silently would be a compat trap. **Needs a decision**; `hostname` is unambiguous and is implemented.
+- **`res.format`** needs the Phase 7 negotiator; **ETag/freshness inside `send`** needs
+  `http/etag.ts` + `http/fresh.ts`; **`req.accepts`/`fresh`/`stale`/`range`** likewise.
+  All tree-tagged [P7]. `res.download` follows once `sendFile` and disposition meet.
+- **`contentDisposition` basename deviates deliberately**: `\` and a drive-letter
+  prefix are separators on every platform, where `path.basename` is platform-dependent
+  and would leave `..\..\secret.pdf` intact on POSIX. For the compat table.
+- **`res.type` throws on an unknown extension** where Express writes the literal
+  string `"false"` into the header. For the compat table.
 
 ## Next
 
-1. Phase 6 `res` surface: `send`, `set`/`get`/`append`, `type`, `sendStatus`, `cookie`/`clearCookie`
-   (signed), `locals`, `vary`, `format`, `links`, `location`, `download`.
-2. Then the Phase 6 exit test: a handler copied from the Express docs runs unmodified.
-3. Still open: item 8 (GC audit), the `req.host` decision, and file-scenario re-adjudication once the AV
-   exclusion lands.
+1. Phase 6 exit test: a handler copied from the Express docs runs unmodified.
+2. Then Phase 7 (negotiation, caching, compression) — which unblocks the deferrals
+   above and is also the W1 static stack.
+3. Still open: item 8 (GC audit), and file-scenario re-adjudication once the AV
+   exclusion lands (this rig still reads ~3.5k opens/sec, DEGRADED-REGIME).
 
 ## Standing measurement rules
 
-Noise floor ~5% e2e; never compare rps across sessions. Cross-framework claims come from
-`bench/interleave.mjs` only — never the sequential matrix. Check both preflights before believing a number.
+Noise floor ~5% e2e; never compare rps across sessions. Cross-framework claims come
+from `bench/interleave.mjs` only. Check both preflights (DEGRADED-REGIME,
+BUSY-MACHINE) before believing a number.
