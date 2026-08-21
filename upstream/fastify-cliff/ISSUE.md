@@ -1,11 +1,15 @@
 # DRAFT — Fastify issue: throughput drops ~30% once the route table crosses ~50–100 routes
 
-> **Status: NOT READY TO FILE.** The effect is real and reproduces in our full
-> bench harness — including a same-day re-verification while this draft was
-> written — but the **stripped-down minimal repro does not reproduce it yet**,
-> and an issue without a self-contained repro wastes maintainer time. What is
-> missing, and exactly what has been ruled out, is at the bottom. Filing
-> happens only after `repro.mjs` shows the cliff on a quiet machine.
+> **Status: NOT READY TO FILE — but for a new reason (Session 12).** The
+> minimal repro EXISTS now: `repro.mjs` is just `Fastify({logger:false})` + N
+> async param routes, and it showed the cliff in 16/16 round-pairs across five
+> server variants in one machine window. The complication: in a different
+> window of the SAME afternoon the effect **inverted** (+14–27%, order-proven
+> non-positional), while a zonix control stayed flat (0.97/1.01) in both
+> windows. The effect is real but **machine-state-dependent, sign included**,
+> on our rig. Filing waits for a second machine (or a characterized stable
+> window), and the issue text must state the state-dependence plainly — a
+> maintainer seeing +20% on their laptop would otherwise rightly dismiss it.
 
 ## Proposed title
 
@@ -69,7 +73,19 @@ your internals would be the next step, and you are better placed to read it.
 Happy to run anything you want on our rig; harness and raw data are published
 at <repo link>.
 
-## Why this is not filed yet (internal status — remove before filing)
+## Why this is not filed yet (internal status — remove before filing, updated Session 12)
+
+**Superseded by Session 12:** the section below documented the search for the
+minimal repro; that search is over — `repro.mjs` (bare Fastify + N param
+routes) cliffs, and every "trigger ingredient" hypothesis proved wrong (the
+morning's flat readings were a sick machine, separated from the afternoon's
+16/16 cliffing rounds by a reboot). The remaining blocker is different: the
+same repro, same machine, later windows, reads the effect INVERTED — and a
+zonix control is flat through every window. Sign-flipping with machine state
+means single-machine evidence is not filable. Needed: reproduction on a
+second machine, and the state-dependence in the issue text.
+
+### Original isolation notes (historical)
 
 The paragraph above cites our full harness (`bench/scaling.mjs` spawning
 `bench/servers/fastify.js`). A **from-scratch minimal server does not show the

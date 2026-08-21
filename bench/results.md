@@ -945,3 +945,69 @@ Both upstream drafts are written (`upstream/fastify-cliff/ISSUE.md`,
 express@4.22.2; docs source files located in `expressjs/expressjs.com` `main`.
 The Fastify one is **blocked on its own minimal repro**, by its own stated
 definition of ready.
+
+---
+
+# Session 12 — two-machines diagnosis, detector port, and the Fastify isolation's twist
+
+_Node 22.20.0, cpu preflight OK (2.6–4.3%) throughout; socket-bench spread
+gate 9.9% at the isolation's start._
+
+## 1. Diagnosis: the harness context is native win32, and it sees no exclusion
+
+Rule-7 fingerprint from inside this session's context: **win32 10.0.26200,
+node v22.20.0, `C:\Program Files\nodejs\node.exe`, cwd on `C:\`** — NOT WSL;
+the bridge hypothesis is dead. The in-context differential: repo 3,781–4,305
+opens/sec @ 74–166×, `%TEMP%` 4,657–4,710 @ 67–72× — **no differential, both
+degraded**, and identical with the tool sandbox disabled. Defender: RTP on,
+**Tamper Protection ON**, exclusion list admin-only. The machine rebooted
+today 13:36. Remaining fork — exclusion reverted (for everyone) vs
+process-scoped — decided by Swapnil re-running `probe.cjs` interactively:
+still ~48k → process-scoped; ~4k → reverted (Tamper Protection or the reboot).
+
+## 2. Detector port (committed 583d72c)
+
+`bench/regime-constants.cjs` is now the ONE copy of the thresholds (degraded =
+opens < 20,000/sec OR ratio > 40×; both lines mid-gap between the two measured
+regimes). `regime.mjs` and `probe.cjs` share it; every reading carries its
+execution-context fingerprint; `run/interleave/ab` all run the check pre AND
+post with REGIME-FLIP voiding.
+
+## 3. The Fastify isolation: minimal repro found — and then the finding changed shape
+
+Strip-isolation from the reproducing side (variants in
+`upstream/fastify-cliff/variants/`, driver `strip.mjs`):
+
+- **A** (verbatim bench server): cliffs — 0.766/0.836/0.733.
+- **B** (fixtures/file routes removed): cliffs.
+- **C** (scale routes ONLY): cliffs — 0.788–0.881, 4/4.
+- **D** (true minimal: inline loop, no schemas, no shared.mjs): **cliffs —
+  0.750–0.852, 4/4.**
+- **E** (D with `reply.send` callbacks): cliffs — 0.711–0.792, 4/4.
+
+So every prior "trigger ingredient" hypothesis was wrong: **the minimal repro
+is just `Fastify({logger:false})` + N async param routes**, and the morning's
+flat readings were the pre-reboot machine state (the 13:36 reboot separates
+them). `repro.mjs` finalized as the self-contained deliverable (interleaved,
+status-asserted, order-configurable).
+
+**Then the twist.** Within the same afternoon, the finalized repro read 200
+routes **+14–21% FASTER** (3/3 rounds) — and an order-reversal test proved it
+is not positional: 200r was faster measured first (+27%) AND second (+21%),
+while an hour earlier it was slower in 8/8 round-pairs. **The sign of
+Fastify's table-size effect flips with machine state.** Absolute bands
+correlate: cliff windows have 6r at 64–95k (all three recorded sessions were
+in this band); inverted windows at 53–65k.
+
+**The control that keeps the claim honest: zonix, measured in the same
+states, both orders — 0.970 and 1.010. Flat. Always.** Today did not weaken
+zonix's half of W2; it strengthened it (flat through machine states that swing
+Fastify ±25%). What it changed is the Fastify half: "loses ~30% at a cliff"
+is now known to be **state-dependent on this rig**, and the upstream issue
+must say so — a maintainer on a different machine might see +20% and
+reasonably call the report wrong.
+
+**Filing bar updated accordingly:** the repro is minimal and self-contained,
+but filing waits for reproduction on a second machine (or a characterized
+stable window), with the state-dependence stated in the issue text. W2's
+publication wording inherits the same caveat — Swapnil's call.
