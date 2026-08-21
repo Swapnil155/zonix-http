@@ -1,6 +1,15 @@
-// Minimal repro: Fastify per-request throughput drops ~20-25% once the route
-// table crosses ~50-100 registered routes, then plateaus — with a SINGLE
-// requested path, so only the size of the table varies, never the traffic.
+// Minimal repro: Fastify per-request throughput CHANGES with the number of
+// registered routes — with a SINGLE requested path, so only the size of the
+// table varies, never the traffic.
+//
+// On our rig the direction is machine-state-dependent: in fast-machine
+// windows (where all three recorded sessions sat) 200 routes reads 20-25%
+// SLOWER than 6, consistently (16/16 round-pairs across five server
+// variants); in slow windows the same script reads it 14-27% FASTER, and an
+// order-reversal test proved that is not positional. A zonix control measured
+// in the same states is flat (0.97-1.01) throughout. Until the effect is
+// reproduced on a second machine, treat any single reading of this script as
+// a sample of the state, not the truth.
 //
 //   npm i fastify autocannon
 //   node repro.mjs                # sweeps 6, 50, 100, 200 routes
