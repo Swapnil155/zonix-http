@@ -14,7 +14,7 @@ import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { ensureFixtures } from "./fixtures.mjs";
-import { measureRegime, reportRegime } from "./regime.mjs";
+import { measureRegime, reportRegime, measureCpu, reportCpu } from "./regime.mjs";
 
 const SCENARIOS = {
   hello: { path: "/", connections: 100, pipelining: 10, duration: 5 },
@@ -35,6 +35,11 @@ const args = new Map(
 const root = fileURLToPath(new URL("..", import.meta.url));
 const names = (args.get("scenario") ?? "hello").split(",");
 const runs = Number(args.get("runs") ?? 7);
+// "optimize" (default) judges a candidate that is trying to be faster.
+// "gate" judges a phase close, where the bar is simply "did not regress"
+// (CLAUDE.md performance rule 2: no more than 2% off hello-world).
+const mode = args.get("mode") ?? "optimize";
+const REGRESSION_BUDGET = -2;
 const settleMs = Number(args.get("settle") ?? 750);
 const baseline = args.get("baseline") ?? "../.baseline-build/index.js";
 const candidate = args.get("candidate") ?? "../../dist/index.js";
@@ -75,6 +80,10 @@ const stop = (child) =>
 
 // A fresh port for every measurement: rebinding a just-closed port on Windows
 // can land on a socket still in TIME_WAIT and skew the run.
+const cpu = await measureCpu();
+reportCpu(cpu);
+console.log("");
+
 // Rule 7 preflight. A paired A/B survives a degraded regime better than a
 // cross-framework run does, but the stamp still has to appear on the record.
 let regime;
@@ -163,11 +172,15 @@ for (const name of names) {
       `${medianOfDeltas >= 0 ? "+" : ""}${medianOfDeltas.toFixed(2)}%, range ${worst.toFixed(1)}%..${best.toFixed(1)}%)`,
   );
   const verdict =
-    medianOfDeltas >= 1
-      ? "KEEP (>= +1% on target scenario)"
-      : medianOfDeltas <= -1
-        ? "REGRESSION"
-        : "REVERT (< 1% win: complexity has a budget)";
+    mode === "gate"
+      ? medianOfDeltas >= REGRESSION_BUDGET
+        ? `PASS (budget ${REGRESSION_BUDGET}%, measured ${medianOfDeltas.toFixed(2)}%)`
+        : `FAIL (worse than the ${REGRESSION_BUDGET}% budget)`
+      : medianOfDeltas >= 1
+        ? "KEEP (>= +1% on target scenario)"
+        : medianOfDeltas <= -1
+          ? "REGRESSION"
+          : "REVERT (< 1% win: complexity has a budget)";
   console.log(`  verdict: ${verdict}`);
   console.log("");
 }

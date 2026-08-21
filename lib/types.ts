@@ -39,4 +39,31 @@ export type HttpMethod = "get" | "post" | "put" | "patch" | "delete" | "head" | 
 export interface ZonixOptions {
   /** Emit warnings for misuse (double `next()`, etc.). Defaults to `NODE_ENV !== "production"`. */
   dev?: boolean;
+  /**
+   * Who is allowed to set `X-Forwarded-*`. **Off by default**, which is the
+   * safe default: with it off, `req.ip` is the socket address and no forwarded
+   * header can influence anything.
+   *
+   * Accepts `true` (trust everything - only behind a proxy you control), a hop
+   * count, an IP or CIDR string, a comma-separated list, an array, or a
+   * predicate. The names `loopback`, `linklocal` and `uniquelocal` expand to
+   * their usual ranges for both IPv4 and IPv6.
+   */
+  trustProxy?: TrustProxyOption;
+  /**
+   * How many trailing host labels are the domain rather than a subdomain.
+   * Defaults to 2, so `a.b.example.com` has subdomains `["b", "a"]`.
+   */
+  subdomainOffset?: number;
+}
+
+/** `(address, hopIndex) => isTrusted`. */
+export type TrustPredicate = (address: string | undefined, hop: number) => boolean;
+
+export type TrustProxyOption = boolean | number | string | readonly string[] | TrustPredicate;
+
+/** Settings after compilation, shared by every request the app serves. */
+export interface ZonixSettings {
+  trust: TrustPredicate;
+  subdomainOffset: number;
 }

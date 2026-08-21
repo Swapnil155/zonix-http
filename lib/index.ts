@@ -26,5 +26,8 @@ export type {
   Middleware,
   Next,
   StringMap,
+  TrustPredicate,
+  TrustProxyOption,
   ZonixOptions,
+  ZonixSettings,
 } from "./types.js";

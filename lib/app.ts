@@ -1,12 +1,21 @@
 import http from "node:http";
 import type { AddressInfo, ListenOptions } from "node:net";
 import { ErrorCode, frameworkError } from "./errors/index.js";
+import { compileTrust } from "./http/proxy.js";
+import { kSettings } from "./internal/constants.js";
 import { dispatchError } from "./internal/dispatch-error.js";
 import { isThenable, runChain } from "./internal/run-chain.js";
 import { ZonixRequest } from "./request.js";
 import { ZonixResponse } from "./response.js";
 import { Router, type Route, type RouteMatch } from "./router/index.js";
-import type { ErrorHandler, Handler, HttpMethod, Middleware, ZonixOptions } from "./types.js";
+import type {
+  ErrorHandler,
+  Handler,
+  HttpMethod,
+  Middleware,
+  ZonixOptions,
+  ZonixSettings,
+} from "./types.js";
 
 const METHODS: readonly HttpMethod[] = ["get", "post", "put", "patch", "delete", "head", "options"];
 
@@ -27,6 +36,13 @@ export class Zonix {
 
   constructor(options: ZonixOptions = {}) {
     this.#dev = options.dev ?? process.env["NODE_ENV"] !== "production";
+    // Compiled once here, read by request accessors through `req.socket.server`.
+    // Nothing is attached per request, so a request that never asks for req.ip
+    // pays nothing for the setting existing.
+    const settings: ZonixSettings = {
+      trust: compileTrust(options.trustProxy),
+      subdomainOffset: options.subdomainOffset ?? 2,
+    };
     this.server = http.createServer(
       { IncomingMessage: ZonixRequest, ServerResponse: ZonixResponse },
       (req, res) => {
@@ -38,6 +54,7 @@ export class Zonix {
         this.#handle(req, res);
       },
     );
+    (this.server as unknown as Record<symbol, ZonixSettings>)[kSettings] = settings;
   }
 
   /** Register global middleware. Runs in registration order for every request. */
