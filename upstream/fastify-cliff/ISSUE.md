@@ -1,19 +1,23 @@
 # DRAFT — Fastify issue: throughput drops ~30% once the route table crosses ~50–100 routes
 
-> **Status: NOT READY TO FILE — but for a new reason (Session 12).** The
-> minimal repro EXISTS now: `repro.mjs` is just `Fastify({logger:false})` + N
-> async param routes, and it showed the cliff in 16/16 round-pairs across five
-> server variants in one machine window. The complication: in a different
-> window of the SAME afternoon the effect **inverted** (+14–27%, order-proven
-> non-positional), while a zonix control stayed flat (0.97/1.01) in both
-> windows. The effect is real but **machine-state-dependent, sign included**,
-> on our rig. Filing waits for a second machine (or a characterized stable
-> window), and the issue text must state the state-dependence plainly — a
-> maintainer seeing +20% on their laptop would otherwise rightly dismiss it.
+> **Status: SECOND ENVIRONMENT OBTAINED (Session 13) — reframe before filing.**
+> Reproduced in the pinned bench container (linux, ext4, node 22.20.0,
+> `--cpus=8`): the effect exists there too, and the container's cleaner
+> numbers finally show what it IS. Fastify's per-process throughput is
+> **bimodal**: with 200 routes, 12/12 fresh processes ran at the common mode
+> (~105k req/s); with 6 routes, 2/12 landed in a **fast mode ~55% higher**
+> (~165k), the rest at the common mode. A zonix control was flat
+> (0.97–1.01) in every window and order. Every earlier contradiction (cliff,
+> flat, inversion) was the fast mode's availability varying, not a scaling
+> cost. **Before filing:** quantify the fast-mode rate (`ROUNDS=20
+repro.mjs 6 200` in the container), then rewrite the title/body below in
+> the bimodal framing. Swapnil decides whether to file.
 
-## Proposed title
+## Proposed title (to be rewritten in the bimodal framing)
 
-`Per-request throughput drops ~30% when the number of registered routes crosses ~50–100, then plateaus (Node 22, Fastify 5.12.1)`
+Old: `Per-request throughput drops ~30% when the number of registered routes crosses ~50–100, then plateaus`
+
+New (draft): `A ~55%-faster per-process throughput mode is reachable with a small route table but never observed with ~200 routes (Node 22, Fastify 5.12.1)`
 
 ## Proposed body (evidence from the recorded harness)
 

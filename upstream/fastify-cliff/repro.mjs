@@ -2,14 +2,15 @@
 // registered routes — with a SINGLE requested path, so only the size of the
 // table varies, never the traffic.
 //
-// On our rig the direction is machine-state-dependent: in fast-machine
-// windows (where all three recorded sessions sat) 200 routes reads 20-25%
-// SLOWER than 6, consistently (16/16 round-pairs across five server
-// variants); in slow windows the same script reads it 14-27% FASTER, and an
-// order-reversal test proved that is not positional. A zonix control measured
-// in the same states is flat (0.97-1.01) throughout. Until the effect is
-// reproduced on a second machine, treat any single reading of this script as
-// a sample of the state, not the truth.
+// What it is (Session 13, pinned linux container, fresh process per run):
+// Fastify's per-process throughput is BIMODAL. With 200 routes every process
+// ran at the common mode (12/12, ~105k req/s at --cpus=8). With 6 routes a
+// process sometimes lands in a FAST mode ~55% higher (2/12 here; the default
+// on our Windows host in fast-machine bands). So "200 routes is 30% slower"
+// really means "the fast mode was never observed with a large table". Run
+// with ROUNDS=20 to sample the mode rate; read each round's 6-route figure
+// as a draw, not a mean. A zonix control measured alongside is flat
+// (0.97-1.01) in every window and order, with no modes.
 //
 //   npm i fastify autocannon
 //   node repro.mjs                # sweeps 6, 50, 100, 200 routes

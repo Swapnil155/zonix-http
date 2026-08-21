@@ -1011,3 +1011,77 @@ reasonably call the report wrong.
 but filing waits for reproduction on a second machine (or a characterized
 stable window), with the state-dependence stated in the issue text. W2's
 publication wording inherits the same caveat — Swapnil's call.
+
+---
+
+# Session 13 — D8 executed: the container is the courtroom
+
+_Host: win32, cpu preflight OK (8.2%). Container: `zonix-bench` from
+`bench/Dockerfile` — node:22.20.0-bookworm-slim, repo COPIED in, `--cpus=8`.
+Container fingerprint: linux 6.6.87.2-microsoft-standard-WSL2, node v22.20.0,
+cwd /zonix, exe /usr/local/bin/node._
+
+## 1. The container is clean by construction
+
+Entry probe, every run: **582–620k opens/sec @ 5.4–5.9×** (repo and /tmp
+alike). The host context reads ~4k @ ~125×. That is a ~140× difference in
+`open()` cost between courtrooms on the same physical machine — the number
+six sessions of frozen file work were waiting for. The in-harness reading
+(`measureRegime` inside interleave) was 305,635 @ 9.2× — clean, and the
+post-check agreed: **no flip**.
+
+## 2. Exit (c), adjudicated at last — file-1kb, paired, rotating order, 5 rounds
+
+| framework |     median |    min |    max | spread |
+| --------- | ---------: | -----: | -----: | -----: |
+| zonix     | **12,370** | 12,252 | 12,724 |   3.8% |
+| express   |      7,117 |  6,974 |  7,194 |   3.1% |
+| fastify   |      8,647 |  8,222 |  8,808 |   6.8% |
+
+**zonix 1.74× Express · 1.43× Fastify.** Regime OK pre and post, no
+REGIME-FLIP, every spread inside tolerance. **Exit (c) — "file-1kb ≥
+Express, plain e2e, under a passing regime preflight" — is MET**, and not
+narrowly. Mechanism is the one already proven paired on the host (F1:
+buffered ≤32KB send vs stream-per-request). Absolutes are container
+absolutes (8 CPUs, autocannon in the same VM) — the ratio is the claim.
+
+## 3. The Fastify repro in the second environment — and what it actually is
+
+Rule 9 required a second environment for a sign-sensitive claim. Two windows,
+separated by the exit-(c) run, each with `repro.mjs` (6 vs 200, interleaved,
+fresh process per run) and the zonix flat-control in both orders:
+
+| window            | fastify 6r (per round)   | fastify 200r (per round) | 200/6 | zonix 200/6 (both orders) |
+| ----------------- | ------------------------ | ------------------------ | ----: | ------------------------- |
+| 1                 | 109k, 100k, 104k         | 105k, 104k, 102k         | 0.998 | 1.012 / 0.982             |
+| 2                 | 106k, **166k**, **163k** | 107k, 111k, 108k         | 0.665 | 1.007 / 0.973             |
+| 6-round follow-up | 104–108k ×6              | 104–108k ×6              | 0.996 | —                         |
+
+**The reframing, and it explains four sessions of contradictions.** Fastify's
+per-process throughput is **bimodal**. At 200 routes every process — 12 of
+12 in the container, all recorded host sessions — ran at the common mode
+(~105k here, ~82k on the host). At 6 routes, a process sometimes lands in a
+**fast mode ~55% higher** (2 of 12 here; the default on the host in
+fast-machine bands, where all three recorded sessions sat). There is no
+per-request cost that grows with table size; there is a fast mode that small
+tables sometimes reach and large tables were never observed to reach.
+
+Everything fits now: the recorded "−30% cliff" = fast-mode-6 vs common-200;
+the host's "inversions" = common-mode-6 vs common-200 under slow-band noise;
+"flat" windows = common-mode-6 vs common-200 on a quiet machine; the profile
+signature (`nextTick` 1% → 22%) = a fast-mode 6-route profile against a
+common-mode 200-route profile. And zonix: **141–150k, 0.97–1.01 in both
+windows, both orders — no modes, no cliff, no noise story**.
+
+**Publication consequences:** the W2 wording "Fastify loses ~30% at a cliff"
+is retired. The accurate statement: _zonix is flat 6→400 routes in every
+environment and state measured; Fastify has a higher-throughput mode that was
+only ever observed with small route tables._ Filable upstream with the
+bimodal framing once the fast-mode rate is quantified (cheap: `ROUNDS=20
+repro.mjs 6 200` in the container) — Swapnil's call.
+
+**Container vs host, for the record:** in the container zonix leads Fastify
+at both sizes (1.36× at 6 routes vs common-mode Fastify, 1.34× at 200);
+on the host the 6-route comparison met fast-mode Fastify (0.97×). Same
+build, different mode availability — another reason absolutes are never the
+claim.
