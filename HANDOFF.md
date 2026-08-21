@@ -58,6 +58,35 @@ implements RFC 6266/5987 properly and is pinned by a differential test against
   injected header name appears inside the correctly _encoded_ value. Assert on the
   header line, not the substring.
 
+## The adversarial review landed after the code, and found four things
+
+The res research finished after the surface was already written, so it was applied
+as a review pass. Three findings changed the code; one is a Phase 7 landmine.
+
+1. **A real vulnerability in `content-disposition@0.5.4`.** Its ISO-8859-1 fallback
+   guard uses a `/g` regex with `.test()`, so `lastIndex` persists across calls and
+   **every third call silently accepts** — the package emits
+   `filename="a
+X-Injected: yes"`, genuine header injection through
+   `options.fallback`. Reproduced live. **Our port is immune** (it resets `lastIndex`
+   on both paths) and now has a regression test so a refactor cannot reintroduce it.
+2. **`Object.prototype.encode` could hijack cookie encoding.** Express reads
+   `opt.encode` with a plain lookup that walks the prototype chain; a polluted
+   prototype would replace the escaping that stops attribute injection. Ours now
+   reads it as an own property, with a test that pollutes the prototype and asserts
+   `;` is still escaped.
+3. **`withCharset` was wider than Express.** It added `; charset=utf-8` to
+   `application/vnd.api+json`; Express's rule is `text/*` plus
+   `application/javascript|json` only. Narrowed to match — being arguably more
+   correct than Express is not worth a silent `Content-Type` divergence.
+4. **Phase 7 landmine, recorded now:** `If-None-Match: *` is **unconditional** — it
+   makes `req.fresh` true even when the response carries no ETag and no
+   `Last-Modified`. **Turning ETag off is not a mitigation.** When freshness lands,
+   either skip the check when there is no validator, or treat `*` as matching only
+   when one is present. Also for Phase 7: ETag hashes every response with a body
+   (not just 2xx), `fresh@0.5` and `fresh@2` disagree on If-None-Match precedence,
+   and `Content-Disposition` is emitted on 304/206/412/416 too.
+
 ## Deferred, with reasons
 
 - **`res.format`** needs the Phase 7 negotiator; **ETag/freshness inside `send`** needs

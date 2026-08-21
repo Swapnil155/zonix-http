@@ -177,10 +177,10 @@ describe("res.set / get / append / type", () => {
   test("adds a charset to a content-type that wants one", () => {
     assert.equal(withCharset("text/html"), "text/html; charset=utf-8");
     assert.equal(withCharset("application/json"), "application/json; charset=utf-8");
-    assert.equal(
-      withCharset("application/vnd.api+json"),
-      "application/vnd.api+json; charset=utf-8",
-    );
+    // Express's rule is text/* plus application/javascript|json only, so a
+    // vendor +json type gets NO charset. Matching that exactly matters more
+    // than being arguably more correct than Express.
+    assert.equal(withCharset("application/vnd.api+json"), "application/vnd.api+json");
   });
 
   test("leaves an existing charset and binary types alone", () => {
@@ -359,6 +359,25 @@ describe("trap: cookie serialization", () => {
       () => serializeCookie("sid", "a; HttpOnly", { encode: (v) => v }),
       /invalid cookie value/,
     );
+  });
+
+  test("a polluted Object.prototype.encode cannot hijack value encoding", () => {
+    // Express reads opt.encode with a plain lookup, which walks the prototype
+    // chain — so pollution would replace the escaping that stops attribute
+    // injection. We read it as an own property.
+    const proto = Object.prototype as unknown as Record<string, unknown>;
+    proto["encode"] = (v: string) => v; // identity: would let ";" through
+    try {
+      assert.equal(serializeCookie("sid", "a; HttpOnly"), "sid=a%3B%20HttpOnly");
+    } finally {
+      delete proto["encode"];
+    }
+  });
+
+  test("a value the encoder cannot handle fails as a framework error", () => {
+    // encodeURIComponent throws URIError on a lone surrogate; without a guard
+    // that surfaces as a bare "URI malformed" with no mention of cookies.
+    assert.throws(() => serializeCookie("sid", "\ud800"), /could not encode the value/);
   });
 
   test("an invalid name is rejected", () => {

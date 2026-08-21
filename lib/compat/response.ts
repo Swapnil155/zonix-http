@@ -18,8 +18,17 @@ import { resolveType } from "../http/mime.js";
 /** `charset=` already present in a content-type. */
 const CHARSET_PATTERN = /;\s*charset\s*=/i;
 
-/** Types that get `; charset=utf-8` appended when the caller did not say. */
-const UTF8_TYPES = /^text\/|^application\/(javascript|json|xml)\b|\+(json|xml)\b/i;
+/**
+ * Types that get `; charset=utf-8` appended when the caller did not say.
+ *
+ * Deliberately the exact rule Express uses (`mime.charsets.lookup`): `text/*`
+ * plus `application/javascript` and `application/json`, and nothing else. A
+ * wider rule was tried and rejected — adding a charset to
+ * `application/vnd.api+json` is arguably more correct but produces a different
+ * `Content-Type` from Express for the same call, which is the sort of silent
+ * divergence the compat surface exists to avoid.
+ */
+const UTF8_TYPES = /^text\/|^application\/(javascript|json)/i;
 
 /**
  * Does this value contain a character that could split the response?

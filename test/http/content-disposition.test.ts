@@ -215,4 +215,33 @@ describe("contentDisposition: the traps", () => {
   test("a non-Latin-1 fallback is rejected", () => {
     assert.throws(() => contentDisposition("a.pdf", { fallback: "日本.pdf" }), /ISO-8859-1/);
   });
+
+  test("the fallback guard cannot be bypassed by calling it repeatedly", () => {
+    // A real vulnerability in content-disposition@0.5.4, found by the
+    // adversarial review and reproduced here: its NON_LATIN1 regex carries the
+    // /g flag, so `.test()` advances `lastIndex` on the shared module-level
+    // regex. Every third call the guard silently ACCEPTS the string, and the
+    // package emits `filename="a\r\nX-Injected: yes"` — genuine header
+    // injection through `options.fallback`.
+    //
+    // Ours resets `lastIndex` on both paths, so the guard is stateless. This
+    // test exists so a future refactor cannot quietly reintroduce the cycle.
+    const evil = "a\r\nX-Injected: yes";
+    for (let i = 0; i < 10; i++) {
+      assert.throws(
+        () => contentDisposition("f.pdf", { fallback: evil }),
+        /ISO-8859-1/,
+        `call ${i + 1} must reject the fallback`,
+      );
+    }
+  });
+
+  test("no fallback value can put a raw CR or LF into the header", () => {
+    for (const fallback of ["a\rb.pdf", "a\nb.pdf", "a\r\nb.pdf"]) {
+      assert.throws(() => contentDisposition("f.pdf", { fallback }), /ISO-8859-1/);
+    }
+    // And the derived fallback never can either: non-Latin-1 becomes "?".
+    const header = contentDisposition("crlf\r\nname.pdf");
+    assert.ok(!header.includes("\r") && !header.includes("\n"), header);
+  });
 });

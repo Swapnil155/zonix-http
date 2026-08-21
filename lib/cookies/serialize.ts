@@ -121,8 +121,15 @@ export interface CookieOptions {
  * something escape into the header.
  */
 export function serializeCookie(name: string, value: string, options: CookieOptions = {}): string {
-  const encode = options.encode ?? encodeURIComponent;
-  if (typeof encode !== "function") {
+  // Read `encode` as an OWN property. A plain lookup walks the prototype chain,
+  // so a polluted `Object.prototype.encode` would take over value encoding for
+  // every cookie the app sets — which is exactly the escaping that stops
+  // attribute injection. Express reads it plainly and is exposed to this.
+  const encode = Object.prototype.hasOwnProperty.call(options, "encode")
+    ? options.encode
+    : undefined;
+  const encoder = encode ?? encodeURIComponent;
+  if (typeof encoder !== "function") {
     throw frameworkError(
       "res.cookie(): encode must be a function",
       serializeCookie,
@@ -139,7 +146,19 @@ export function serializeCookie(name: string, value: string, options: CookieOpti
     );
   }
 
-  const encoded = encode(value);
+  // encodeURIComponent throws URIError on a lone surrogate, which would
+  // otherwise surface as a bare "URI malformed" with no hint that a cookie
+  // caused it.
+  let encoded: string;
+  try {
+    encoded = encoder(value);
+  } catch (err) {
+    throw frameworkError(
+      `res.cookie(): could not encode the value for ${JSON.stringify(name)}: ${(err as Error).message}`,
+      serializeCookie,
+      ErrorCode.INVALID_ARGUMENT,
+    );
+  }
   if (!isCookieValue(encoded)) {
     throw frameworkError(
       `res.cookie(): invalid cookie value for ${JSON.stringify(name)}`,
