@@ -16,3 +16,4 @@ bench/.s4b.json
 bench/.w2v.json
 *.log
 .DS_Store
+bench/.m3/

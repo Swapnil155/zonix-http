@@ -1,65 +1,77 @@
 # HANDOFF
 
-**Phase:** between 6 (closed) and 7. This session was T-1 only, per instruction.
-**Turbo is DEAD** — killed at T-1 under D7. Next: Phase 7.
+**Phase:** 7 opens next session — negotiator first, oracle tests from day one.
+This session: regime verdict, M3, upstream drafts (present-only, nothing filed).
 
-## Done this session — T-1, the D7 adjudication
+## Done this session
 
-Built the thinnest **end-to-end** Turbo path per the Session 8 sharpened spec
-(`bench/servers/spike/t1/`): real request-line + header parse with limits
-enforced (token method, no-ws-before-colon, 100-header/8KB-line/16KB-head caps,
-strict CL digits, dup-CL → 400, TE → 501), the head-of-line ordering queue in
-the measured path at depth 1, the documented zonix `res` subset
-(`status()`/`set()`/`json()`, per-request serialization and header build — no
-static buffers), static-map dispatch, CL body draining, 8-deep pipeline cap.
+**1. Regime preflight: the AV exclusion has NOT landed.** 3,897 / 4,617 / 4,506
+opens/sec (threshold 50,000) — the same ~4k band as every session since BI-1,
+reads-on-open-fd 123–163× faster (filter-driver signature), and system-wide:
+fixture dir 3,863, repo `bench/` 4,200, `os.tmpdir()` 4,453. **DEGRADED-REGIME;
+W1/M1 stays frozen — fifth session.** Whatever was excluded, `open()` is still
+intercepted everywhere.
 
-**Correctness before numbers** (standing practice): `gauntlet.mjs` **16/16** —
-including the HOL proof (slow first request, responses still in request order)
-and fatal-behind-in-flight (parse error waits for earlier responses, in order,
-then 400 + close). `smoke.mjs` verified all four servers' bodies both brackets.
+**2. M3 shipped** (`bench/startup.mjs`, clean installs in gitignored
+`bench/.m3/`, zonix from its own `npm pack` tarball):
 
-**The judged cell** (p=1, C=6, sync hello, paired, 5 rounds, cpu OK 3.7%):
+| framework | install | files | pkgs | cold import | RSS 10k (gc) |
+| --------- | ------: | ----: | ---: | ----------: | -----------: |
+| zonix     |  116 KB |     5 |    1 |     16.2 ms |      47.1 MB |
+| express   | 2.21 MB |   618 |   68 |     77.5 ms |     100.8 MB |
+| fastify   | 7.38 MB | 2,033 |   56 |     68.8 ms |      56.3 MB |
 
-| vs      |  ratio | bar   | result                                          |
-| ------- | -----: | ----- | ----------------------------------------------- |
-| raw     | 1.362× | 1.40× | **FAILED** (pairs 1.29–1.39, none reached 1.40) |
-| fastify | 1.392× | 1.30× | cleared                                         |
-| zonix   | 1.408× | —     | informational                                   |
+Margins: express 19.5×/124×/68 pkgs/4.8×/2.1×; fastify 65×/407×/56 pkgs/4.2×/
+**1.20× RSS — the small margin published as plainly as the large ones.** Bonus
+finding: first-ever import after install read express 1,240 ms / fastify
+1,487 ms (zonix 21.6 ms) — the filter driver scanning fresh files; on AV-laden
+machines the file-count margin becomes a first-cold-start wall-clock margin.
 
-**One bar missed → Turbo dies.** No re-rolls: the config was fixed in advance,
-the median of paired rounds is the number.
+**3. Upstream drafts — both written, NOTHING filed (`upstream/`):**
 
-**The erosion is the finding:** T-0's spike read 1.71× at p=1; the end-to-end
-path reads 1.36× — real parsing + HOL + per-request response building ate ~20%
-of throughput. That is exactly the question T-1 existed to answer before any
-smuggling/fuzz investment, and D7's raised bar did its job. Corking bracket
-confirmed TURBO.md §6: sync p=16 1.65×, async p=16 1.55×, p=1 corking never
-engages. Full write-up in `bench/results.md`; TURBO.md status banner records
-the kill and stays as the design + falsification record.
+- **Express docs PR (`express-docs/PR.md`): READY pending review.** The 4x and
+  5x docs claim `req.is('application/*')` returns the pattern; verified against
+  `type-is@1.6.18` AND `@2.1.0` (Express 5's line — installed and run today)
+  plus the wire test: all return the matched type. Source files located
+  (`src/content/api/{4x,5x}/api/request/index.mdx` on `main`); 4-line diff
+  drafted; prose is already correct, only the examples are wrong.
+- **Fastify cliff issue (`fastify-cliff/ISSUE.md`): NOT ready — blocked on its
+  own minimal repro.** The recorded harness reproduced again today (93,424 →
+  70,896, −24%, third session), but a from-scratch minimal server does NOT show
+  the cliff. Paired swap test localizes the trigger to
+  `bench/servers/fastify.js` (ratio contrast 0.24–0.41 per round, every round);
+  falsified one-at-a-time: handler style, the fixed-route mix, shared options
+  object. **Machine caveat: socket benches wobbled ~40% intra-config today
+  (norm ~5%) with CPU preflight green — a preflight blind spot; today's
+  falsifications are low-confidence and isolation restarts on a quiet machine.**
 
 ## Things worth remembering
 
-- **`turbo/zonix` was 1.41×** — the ceiling a transport swap could have bought a
-  zonix user. Recorded so nobody re-proposes this without new physics.
-- **async bracket** (setImmediate in all four servers): turbo/raw 1.28×,
-  turbo/fastify 1.33× — the margin shrinks further under async handlers.
-- The t1 parser/gauntlet are reusable instrumentation (16-check raw-wire
-  correctness harness, HOL/framing tests) if any raw-socket work ever returns.
+- **The CPU preflight can be green while socket benches are unusable.** Today:
+  40% intra-config spread, inverted concurrency response (c=20/p=4 faster than
+  c=100/p=10), effects appearing/disappearing between rounds. Suspect the
+  filter driver in an aggressive mode after heavy npm/file churn. If Phase 7
+  W1 numbers wobble like this, stop and re-run another day — don't bisect noise.
+- The Express-docs defect is now triple-verified (both type-is majors + wire).
+- `bench/.m3/` is gitignored scratch; `--fresh` reinstalls.
 
-## Next
+## Next (Phase 7 — per session instruction)
 
-1. **Phase 7** — negotiation, ETag/304, ranges, compression, opt-in static
-   cache (W1/M1). Landmine on record: `If-None-Match: *` is unconditional —
-   skip freshness when there is no validator; ETag-off is not a mitigation.
-2. **Regime preflight first** — it decides whether the AV exclusion landed
-   (last reading ~3.5k opens/sec, DEGRADED-REGIME; M1 blocked on it).
-3. **M3** (`bench/startup.mjs`) + upstream filings (Fastify cliff repro,
-   Express `req.is` docs PR).
-4. Still open: item 8 (GC audit).
+1. **Negotiator first** (`lib/negotiation/`): Accept / Accept-Encoding /
+   Accept-Language / Accept-Charset, q-values, specificity, linear parsers only.
+   **Oracle tests day one:** pin `negotiator` as a devDependency, differential
+   - seeded fuzz per rule 8 — before wiring into `req.accepts`/`res.format`.
+2. Then ETag + fresh → 304 (`http/etag.ts`, `http/fresh.ts`) — landmine on
+   record: `If-None-Match: *` is unconditional; skip freshness when there is no
+   validator. Then range/206, compression, serveStatic cache (W1 stack).
+3. W1/M1 file adjudication still frozen on the AV exclusion (regime preflight
+   decides).
+4. Open: Fastify repro isolation (quiet machine), Express docs PR filing
+   decision (Swapnil), item 8 GC audit.
 
 ## Standing measurement rules
 
 Noise floor ~5% e2e; never compare rps across sessions. Cross-framework claims
-come from `bench/interleave.mjs` only. Check both preflights (DEGRADED-REGIME,
-BUSY-MACHINE) before believing a number. Local claims are Node 22-only until
-Phase 9 CI owns the matrix.
+from `bench/interleave.mjs` only. Check both preflights — and now also watch
+intra-config spread: >10% means the machine is lying regardless of preflights.
+Local claims are Node 22-only until Phase 9 CI owns the matrix.

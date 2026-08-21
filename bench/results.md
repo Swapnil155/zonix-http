@@ -867,3 +867,81 @@ fuzz upkeep. zonix's crown rests on M1–M3 + parity, as D7 said it would.
 
 Turbo is dead. The number is recorded. `bench/servers/spike/t1/` stays in the
 tree as the falsification record and as reusable instrumentation.
+
+---
+
+# Session 10 — regime verdict, M3 footprint, upstream drafts
+
+_Node 22.20.0. CPU preflight OK throughout (2.6–8.3% across 24 cores)._
+
+## 1. Regime preflight: the AV exclusion has NOT landed
+
+Three consecutive readings on the bench fixture: **3,897 / 4,617 / 4,506
+opens/sec** against the 50,000 threshold — the same ~4k band as every session
+since BI-1. Reads on an already-open fd run 123–163× faster, which is the
+filter-driver signature, not a slow disk. And it is system-wide, not a
+per-directory miss: fixture dir 3,863, repo `bench/` 4,200, `os.tmpdir()`
+4,453. **DEGRADED-REGIME stands; W1/M1 file adjudication stays frozen** (fifth
+session). Whatever exclusion was added, the filter driver is still
+intercepting `open()` everywhere we can reach.
+
+## 2. M3 — footprint & cold start (`bench/startup.mjs`)
+
+Clean installs in `bench/.m3/` (zonix from its own `npm pack` tarball —
+`files: ["dist"]` — competitors pinned to the versions every recorded matrix
+used). Cold import is the in-process `import()`/`require()` duration, node
+boot excluded, median of 10 fresh processes. RSS measured after 10k keep-alive
+requests against a minimal hello app, then again after `gc()`.
+
+| framework | install size | files | packages | cold import (median of 10) | RSS after 10k req (gc) |
+| --------- | -----------: | ----: | -------: | -------------------------: | ---------------------: |
+| zonix     |     116.3 KB |     5 |        1 |                    16.2 ms |                47.1 MB |
+| express   |      2.21 MB |   618 |       68 |                    77.5 ms |               100.8 MB |
+| fastify   |      7.38 MB | 2,033 |       56 |                    68.8 ms |                56.3 MB |
+
+Margins vs zonix: **express 19.5× bytes / 124× files / 68 packages / 4.8×
+import / 2.1× RSS; fastify 65× bytes / 407× files / 56 packages / 4.2× import /
+1.20× RSS.** Two runs; medians agreed (import 16.2/19.1, 77.5/79.9, 68.8/67.6
+across runs). Per M3's own rule, the small margin is published as plainly as
+the large ones: **fastify's steady-state RSS is only 1.20× zonix's** — the
+orders of magnitude live in install size and file count, not in resident
+memory.
+
+One genuine finding hiding in the max column: on the FIRST-ever import after
+install, express read 1,240 ms and fastify 1,487 ms (zonix 21.6 ms) — ~70×
+slower than their own warm medians. A second run collapsed both to their
+medians. That is the filter driver scanning hundreds of freshly written files
+on first touch: **on AV-laden machines the file-count margin becomes a
+first-cold-start wall-clock margin.** Recorded as an observation of this rig,
+not a general claim.
+
+## 3. The Fastify cliff repro — honest status: not minimal yet
+
+Per the M2 obligation, a self-contained repro was built for the upstream
+issue. It does not reproduce the cliff — and finding out why turned into the
+session's real work:
+
+- **The recorded instrument still reproduces**: `bench/scaling.mjs` today read
+  6→200 routes as 93,424 → 70,896 (**−24%**; recorded −31%). Third session the
+  ratio has held.
+- **A from-scratch minimal server shows no cliff** (flat to inverted), same
+  machine, same load shape, all-200s verified.
+- **Paired swap test** (both servers under the same measuring parent,
+  interleaved in the same rounds): the bench server's 200/6 ratio sat
+  0.24–0.41 _below_ the minimal server's in every round — the trigger is in
+  `bench/servers/fastify.js`, not in the harness.
+- **Falsified one variable at a time**: handler style (async return vs
+  `reply.send`), the six fixed routes registered ahead of the scale table, a
+  shared `{}` options object. None flipped the minimal server.
+- **Machine caveat, recorded per rule 6**: socket benches today wobbled up to
+  ~40% intra-config (norm ~5%) with the CPU preflight green throughout — a
+  preflight blind spot (it sees CPU, not whatever this was). Today's
+  falsifications are therefore lower-confidence, and isolation restarts on a
+  quiet machine before any filing.
+
+Both upstream drafts are written (`upstream/fastify-cliff/ISSUE.md`,
+`upstream/express-docs/PR.md`). The Express one is **ready to file** —
+`type-is@1.6.18` and `@2.1.0` verified directly, plus the wire test against
+express@4.22.2; docs source files located in `expressjs/expressjs.com` `main`.
+The Fastify one is **blocked on its own minimal repro**, by its own stated
+definition of ready.
