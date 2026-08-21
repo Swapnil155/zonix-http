@@ -1,23 +1,30 @@
 # DRAFT — Fastify issue: throughput drops ~30% once the route table crosses ~50–100 routes
 
-> **Status: SECOND ENVIRONMENT OBTAINED (Session 13) — reframe before filing.**
-> Reproduced in the pinned bench container (linux, ext4, node 22.20.0,
-> `--cpus=8`): the effect exists there too, and the container's cleaner
-> numbers finally show what it IS. Fastify's per-process throughput is
-> **bimodal**: with 200 routes, 12/12 fresh processes ran at the common mode
-> (~105k req/s); with 6 routes, 2/12 landed in a **fast mode ~55% higher**
-> (~165k), the rest at the common mode. A zonix control was flat
-> (0.97–1.01) in every window and order. Every earlier contradiction (cliff,
-> flat, inversion) was the fast mode's availability varying, not a scaling
-> cost. **Before filing:** quantify the fast-mode rate (`ROUNDS=20
-repro.mjs 6 200` in the container), then rewrite the title/body below in
-> the bimodal framing. Swapnil decides whether to file.
+> **Status: NOT FILABLE AS A TABLE-SIZE ISSUE (2026-08-22, post-audit
+> session) — the minimal repro does not reproduce a table-size effect.**
+> `ROUNDS=20 repro.mjs 6 200` in the pinned container: the fast mode (~165k)
+> was reached by **8/20 six-route processes and 9/20 two-hundred-route
+> processes** — same rate, independent of table size; a per-process,
+> per-session lottery (Session 14 read 0/20 + 0/20 in the same container).
+> The earlier "never observed with ~200 routes" statement is **withdrawn**.
+> What remains is narrower: in _our full bench server_
+> (`bench/servers/fastify.js`) the 200-route configuration has read the
+> common band in 13/13 container processes while the 6-route configuration
+> read the fast band 16/16 in the same matrices — a ~0.03% coincidence at
+> a 45% lottery rate, so that effect is real but belongs to that server's
+> construction at 200 routes, not to Fastify + 200 routes in general.
+> **Before anything is filed:** a V8-level explanation (`--trace-deopt` /
+> `--trace-ic` of the bench server at 6 vs 200 routes) that names what denies
+> the fast mode. Without a mechanism there is nothing to ask upstream to fix.
+> The bimodal per-process throughput itself (fast vs common, ~55% apart, same
+> code, same table) may be worth a separate, smaller report once its trigger
+> is understood. Swapnil decides.
 
 ## Proposed title (to be rewritten in the bimodal framing)
 
 Old: `Per-request throughput drops ~30% when the number of registered routes crosses ~50–100, then plateaus`
 
-New (draft): `A ~55%-faster per-process throughput mode is reachable with a small route table but never observed with ~200 routes (Node 22, Fastify 5.12.1)`
+New (draft, superseded 2026-08-22): ~~`A ~55%-faster per-process throughput mode is reachable with a small route table but never observed with ~200 routes`~~ — falsified by ROUNDS=20 (9/20 fast at 200 routes). No title until a mechanism exists.
 
 ## Proposed body (evidence from the recorded harness)
 

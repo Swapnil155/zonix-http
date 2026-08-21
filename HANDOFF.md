@@ -3,7 +3,22 @@
 **Phase:** 7 — OPEN. Negotiator landed and wired; tests green. Next: ETag/fresh
 → 304, range/206, compression, serveStatic cache (the W1/M1 stack).
 
-## Done this session (2026-08-22 — Fastify source audit)
+## Done this session (2026-08-22 — post-audit matrix + cpeak, container)
+
+cpeak 2.9.2 pinned exact; `bench/servers/cpeak.js`; `bench/smoke-servers.mjs`
+byte-checks all four servers per scenario (SMOKE OK host + container) before
+benching; `matrix.mjs --frameworks=`. Table in `bench/results.md` "Post-audit
+matrix 2026-08-22, container". zonix vs cpeak: 1.11–1.84× everywhere EXCEPT
+**post-json-echo 0.58× — cpeak is 1.7× faster on the JSON-body path (also
+beats Fastify/Express there). FIRST ITEM NEXT SESSION: profile echo, read
+cpeak's parseJSON, adjudicate by paired e2e (gap ≫ noise).** Fastify ratios
+unchanged post-audit (0.94/1.37/0.91/1.43). **ROUNDS=20 repro: fast mode
+8/20 at 6 routes AND 9/20 at 200 — "200 never fast" is FALSIFIED; the
+table-size effect exists only in bench/servers/fastify.js (0/13 fast at 200
+vs 16/16 at 6), not in the minimal repro. Not filable as a table-size issue;
+ISSUE.md status updated.** zonix flat control untouched (146–151k @200).
+
+## Done earlier (2026-08-22 — Fastify source audit)
 
 `fastify@5.12.1` + `find-my-way@9.8.0` pinned exact; hot paths read. 14-row
 diff table in `bench/results.md` "Fastify source audit 2026-08-22". Verdict:

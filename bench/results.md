@@ -1280,3 +1280,119 @@ Nothing — no change was attempted that did not survive.
 _Host e2e absolutes above (~88k) are this host's Claude-Code execution context
 on the day; ratios and paired deltas only. Baseline frozen with
 `bench/snapshot.mjs` from `65f2d8e` before any edit._
+
+---
+
+# Post-audit matrix 2026-08-22, container
+
+_Four frameworks: zonix (post-audit build `dbb33a3`, plain-object params),
+express 4.22.2, fastify 5.12.1, **cpeak 2.9.2** (pinned exact; the
+architectural reference). `bench/servers/cpeak.js` added with equivalent
+routes; **`bench/smoke-servers.mjs` byte-checked every scenario across all four
+before any number was read** — identical bodies and content-lengths
+everywhere (the only differences are content-type spelling: cpeak omits
+`; charset=utf-8`, Express writes `UTF-8` on files), in-container smoke
+SMOKE OK. Harness `bench/matrix.mjs --frameworks=zonix,express,fastify,cpeak`,
+`--cpus=8`, rotating order, 1 warmup + 5s measured, ≥5 rounds extended to 8
+while any spread > 5%, 404 == 100% asserted, regime pre AND post._
+
+**Host preflight:** cpu OK — 4.7% across 24 cores. **Container entry probe:**
+repo 570,657 opens/sec @ 4.9×, `/tmp` 594,764 @ 4.9× → REGIME CLEAN.
+
+```
+context: linux 6.6.87.2-microsoft-standard-WSL2 node v22.20.0
+  cwd /zonix · tmp /tmp · exe /usr/local/bin/node
+regime pre:  OK — 305,356 opens/sec, 2,423,748 fd-reads/sec (7.9x)
+regime post: OK — 198,100 opens/sec, 3,251,914 fd-reads/sec (16.4x) -> no flip; file numbers stand
+node v22.20.0 · container cpus=8 · image node:22.20.0-bookworm-slim · repo copied in
+```
+
+| scenario         |   zonix | express | fastify |   cpeak |   z/e |   z/f |       z/c |        spread% (z/e/f/c) | rounds |
+| ---------------- | ------: | ------: | ------: | ------: | ----: | ----: | --------: | -----------------------: | -----: |
+| hello            | 161,984 |  28,030 | 172,480 | 136,090 | 5.78× | 0.94× |     1.19× |   9.4 / 7.8 / 5.2 / 16.8 |      8 |
+| routes-6-param   | 147,712 |  26,160 | 161,702 | 123,590 | 5.65× | 0.91× |     1.20× |    6.8 / 8.8 / 6.8 / 5.6 |      8 |
+| routes-200-param | 147,187 |  22,382 | 107,386 | 123,693 | 6.58× | 1.37× |     1.19× |    3.3 / 4.9 / 3.9 / 3.8 |      5 |
+| chain            | 151,475 |  26,936 | 166,464 |  99,168 | 5.62× | 0.91× |     1.53× |  10.5 / 6.0 / 4.0 / 12.9 |      8 |
+| 404              | 150,323 |  24,936 | 154,010 | 135,651 | 6.03× | 0.98× |     1.11× |   7.1 / 10.1 / 9.8 / 7.1 |      8 |
+| post-json-echo   |  44,432 |  14,528 |  47,379 |  76,134 | 3.06× | 0.94× | **0.58×** | 14.5 / 6.8 / 11.6 / 17.1 |      8 |
+| file-1kb         |  12,458 |   7,099 |   8,711 |   6,773 | 1.76× | 1.43× |     1.84× |    4.1 / 3.4 / 1.4 / 2.9 |      5 |
+
+### Per-round values (fastify in full; zonix alongside as the rule-9 flat control)
+
+| scenario         | fastify rounds                                                         | split                      | zonix rounds                                                           | cpeak rounds                                                           | express rounds                                                 |
+| ---------------- | ---------------------------------------------------------------------- | -------------------------- | ---------------------------------------------------------------------- | ---------------------------------------------------------------------- | -------------------------------------------------------------- |
+| hello            | 168,947, 175,782, 173,018, 166,899, 173,222, 169,050, 174,630, 171,942 | unimodal (fast band 8/8)   | 149,619, 163,264, 164,826, 154,202, 163,546, 162,394, 154,842, 161,574 | 139,712, 137,453, 133,920, 137,562, 131,315, 137,331, 134,848, 116,883 | 26,514, 28,194, 28,690, 28,139, 28,190, 27,922, 27,349, 26,805 |
+| routes-6-param   | 162,650, 154,278, 164,902, 165,261, 161,779, 155,328, 161,626, 160,371 | unimodal (fast band 8/8)   | 141,427, 151,411, 147,955, 149,133, 149,798, 147,418, 147,469, 143,194 | 123,322, 125,165, 123,066, 125,280, 118,406, 123,859, 125,101, 121,274 | 26,427, 25,893, 27,301, 25,582, 27,656, 25,358, 25,736, 27,077 |
+| routes-200-param | 105,030, 106,925, 108,704, 107,386, 109,242                            | unimodal (common band 5/5) | 147,187, 151,002, 146,598, 146,189, 148,416                            | 123,770, 123,693, 119,520, 120,557, 124,192                            | 22,139, 22,994, 22,382, 22,494, 21,893                         |
+| chain            | 163,674, 167,155, 161,446, 166,566, 168,154, 165,824, 168,026, 166,362 | unimodal (fast band 8/8)   | 150,899, 148,160, 138,150, 154,074, 153,050, 152,051, 149,338, 153,126 | 98,810, 100,653, 100,422, 87,891, 98,682, 98,989, 99,347, 99,488       | 27,150, 26,546, 26,722, 26,578, 28,002, 28,056, 27,896, 26,450 |
+| 404              | 157,658, 153,792, 154,893, 145,907, 151,360, 154,227, 156,198, 142,579 | unimodal                   | 150,566, 150,080, 150,080, 145,190, 142,349, 151,846, 152,077, 153,024 | 136,224, 140,019, 135,078, 134,765, 130,451, 136,922, 139,789, 134,874 | 25,269, 24,709, 24,402, 24,171, 23,806, 26,008, 25,163, 26,325 |
+| post-json-echo   | 47,645, 47,114, 45,251, 44,586, 43,459, 48,957, 47,869, 48,605         | unimodal                   | 46,256, 45,744, 40,464, 42,973, 41,610, 43,120, 46,365, 46,890         | 77,728, 79,648, 67,795, 72,045, 77,190, 74,170, 75,078, 80,813         | 14,588, 14,985, 14,300, 14,418, 14,273, 14,468, 15,262, 14,658 |
+| file-1kb         | 8,711, 8,736, 8,711, 8,809, 8,685                                      | unimodal                   | 12,700, 12,263, 12,770, 12,404, 12,458                                 | 6,800, 6,773, 6,785, 6,723, 6,604                                      | 7,011, 6,965, 7,208, 7,206, 7,099                              |
+
+### ROUNDS=20 `repro.mjs 6 200` — the pre-filing datum, and it changes the claim
+
+Same container, immediately after the matrix. Minimal repro (`Fastify({logger:false})`
+
+- N param routes, async handlers, one requested path), 20 fresh processes per size:
+
+```
+6 routes:   fast band (≥160k) 8/20   common band (~104–112k) 12/20   median 112,000
+200 routes: fast band (≥160k) 9/20   common band (~104–112k) 11/20   median 112,144
+per-round 200/6 ratios: 0.952 1.500 1.000 0.989 1.453 1.000 1.496 1.010 1.030 1.002
+                        1.010 0.645 1.586 1.454 0.654 1.001 0.664 0.975 1.013 0.664
+```
+
+**200-route processes reach the fast mode — 9 of 20 — at the same rate as
+6-route processes.** In the minimal repro the mode is a per-process lottery
+(~45% here, 0% in Session 14's 0/20+0/20 — the availability is per-session)
+and it is **independent of table size**. The "200 routes were never observed
+in the fast mode" statement is **falsified** by this datum and is withdrawn.
+
+What still stands, and only this: **in `bench/servers/fastify.js`** — the full
+bench server (files, chain, echo routes present, sync-style handlers) — the
+200-route configuration has read the common band in every container process
+so far (5/5 today, 13/13 cumulative) while the 6-route configuration read the
+fast band 8/8 today (16/16 across both matrices). So a table-size effect exists
+in _our bench server_ and not in the minimal repro — exactly the Session 11
+possibility ("an artifact of `bench/servers/fastify.js` construction") that the
+strip-isolation was believed to have ruled out. With today's lottery rate at
+~45%, 13 consecutive common-band 200-route bench-server processes would be a
+~0.03% coincidence if the rate applied there — so the bench-server effect is
+real, but it is a property of _that server + 200 routes_, not of Fastify + 200
+routes in general. **Not filable as a table-size issue on `repro.mjs`:** the
+repro does not reproduce a table-size effect. The upstream question becomes
+"what in this server at 200 routes denies the fast mode?" — which needs a
+V8-level explanation (deopt/IC trace) before anyone else's time is asked for.
+ISSUE.md status updated accordingly. **zonix, both instruments, all states:
+146–151k at 200 routes, 141–165k at 6, no modes** — the flat-control half of
+W2 is untouched.
+
+### Reading the rest honestly
+
+- **cpeak beats zonix on post-json-echo by 1.7× (0.58×), and beats Fastify and
+  Express there too.** Every other scenario zonix leads cpeak (1.11–1.84×).
+  The echo path — body read + JSON parse + `res.json` — is where cpeak's
+  `parseJSON` does something cheaper than ours and Fastify's; the Fastify audit
+  could not have found it because it audited the wrong framework. **Open
+  item, first thing next session:** profile `post-json-echo` and read cpeak's
+  `parseJSON`; adjudicate per rule 5 (the gap is 10× the noise floor, so plain
+  paired e2e decides).
+- **cpeak on chain: 1.53×** — its middleware runner pays per link what zonix's
+  precomposed pipeline + sync completion removed. **file-1kb 1.84×** — the
+  buffered-send mechanism against stream-per-request, as with the others.
+- **Spread breaches, logged:** hello (zonix 9.4%, cpeak 16.8% — one 116k
+  round), chain (zonix 10.5%, cpeak 12.9% — one 87k round), 404 (express 10.1%,
+  fastify 9.8%), post-json-echo (zonix 14.5%, fastify 11.6%, cpeak 17.1%) even
+  at 8 rounds; all single-round dips against tight bands, medians stand; the
+  echo scenario is the noisiest in the matrix and its 0.94×/0.58× are read with
+  that in mind (the 0.58× is far outside any spread).
+- **Regime:** clean pre and post, but the post reading drifted to 198k opens/sec
+  @ 16.4× (from 305k @ 7.9×) — still an order of magnitude inside the clean
+  side of both thresholds (20k / 40×); no flip. Recorded because drift within
+  the clean band is the thing rule 7's margins exist to absorb.
+- Express again emitted `MaxListenersExceededWarning` on the 404 path under
+  pipelining 10; 404 == 100% asserted for all four.
+- **Post-audit zonix ratios vs the pre-audit matrix (same container, different
+  session): hello 0.94× vs 0.93×, routes-200 1.37× vs 1.35×, chain 0.91× vs
+  0.90×, file-1kb 1.43× vs 1.46× — unchanged within noise, as the audit's own
+  sub-noise measurements predicted.**

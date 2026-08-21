@@ -62,7 +62,7 @@ const SCENARIOS = [
     informational: true,
   },
 ];
-const FRAMEWORKS = ["zonix", "express", "fastify"];
+const ALL_FRAMEWORKS = ["zonix", "express", "fastify", "cpeak"];
 
 const args = new Map(
   process.argv.slice(2).map((a) => {
@@ -74,6 +74,14 @@ const minRounds = Number(args.get("rounds") ?? 5);
 const maxRounds = Number(args.get("max-rounds") ?? minRounds + 3);
 const settleMs = Number(args.get("settle") ?? 750);
 const wanted = args.get("scenarios")?.split(",");
+const FRAMEWORKS = (args.get("frameworks") ?? "zonix,express,fastify").split(",");
+for (const f of FRAMEWORKS) {
+  if (!ALL_FRAMEWORKS.includes(f)) {
+    console.error(`Unknown framework ${f}`);
+    process.exit(1);
+  }
+}
+const others = FRAMEWORKS.filter((f) => f !== "zonix");
 const scenarios = SCENARIOS.filter((s) => !wanted || wanted.includes(s.id));
 const root = fileURLToPath(new URL("..", import.meta.url));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -184,26 +192,32 @@ console.log("");
 console.log("### Table");
 console.log("");
 console.log(
-  "| scenario | zonix rps | express rps | fastify rps | zonix/express | zonix/fastify | spread% (z/e/f) | rounds |",
+  `| scenario | ${FRAMEWORKS.map((f) => `${f} rps`).join(" | ")} | ${others
+    .map((f) => `zonix/${f}`)
+    .join(" | ")} | spread% (${FRAMEWORKS.map((f) => f[0]).join("/")}) | rounds |`,
 );
-console.log("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |");
+console.log(
+  `| --- | ${FRAMEWORKS.map(() => "---:").join(" | ")} | ${others.map(() => "---:").join(" | ")} | ---: | ---: |`,
+);
 for (const scenario of scenarios) {
   const s = results[scenario.id];
   const z = median(s.zonix);
-  const e = median(s.express);
-  const f = median(s.fastify);
   let label = scenario.informational ? `${scenario.id} (informational)` : scenario.id;
   if (comparison.flip && scenario.id.startsWith("file-")) label += " **REGIME-FLIP**";
   console.log(
-    `| ${label} | ${fmt(z)} | ${fmt(e)} | ${fmt(f)} | ${(z / e).toFixed(2)}× | ${(z / f).toFixed(2)}× | ` +
-      `${spreadOf(s.zonix).toFixed(1)} / ${spreadOf(s.express).toFixed(1)} / ${spreadOf(s.fastify).toFixed(1)} | ${s.zonix.length} |`,
+    `| ${label} | ${FRAMEWORKS.map((f) => fmt(median(s[f]))).join(" | ")} | ` +
+      `${others.map((f) => `${(z / median(s[f])).toFixed(2)}×`).join(" | ")} | ` +
+      `${FRAMEWORKS.map((f) => spreadOf(s[f]).toFixed(1)).join(" / ")} | ${s.zonix.length} |`,
   );
 }
 console.log("");
 console.log("### Per-round values (fastify in full; zonix alongside as the rule-9 flat control)");
 console.log("");
-console.log("| scenario | fastify rounds | fastify split | zonix rounds | express rounds |");
-console.log("| --- | --- | --- | --- | --- |");
+const rest = FRAMEWORKS.filter((f) => f !== "fastify" && f !== "zonix");
+console.log(
+  `| scenario | fastify rounds | fastify split | zonix rounds | ${rest.map((f) => `${f} rounds`).join(" | ")} |`,
+);
+console.log(`| --- | --- | --- | --- | ${rest.map(() => "---").join(" | ")} |`);
 for (const scenario of scenarios) {
   const s = results[scenario.id];
   // A fast-band process sits well above the common band: 1.25x the minimum is
@@ -214,7 +228,7 @@ for (const scenario of scenarios) {
     fast === 0 ? "unimodal" : `**BIMODAL: ${fast} fast / ${s.fastify.length - fast} common**`;
   const mark = (xs) => xs.map((x) => (x > floor ? `**${fmt(x)}**` : fmt(x))).join(", ");
   console.log(
-    `| ${scenario.id} | ${mark(s.fastify)} | ${split} | ${s.zonix.map(fmt).join(", ")} | ${s.express.map(fmt).join(", ")} |`,
+    `| ${scenario.id} | ${mark(s.fastify)} | ${split} | ${s.zonix.map(fmt).join(", ")} | ${rest.map((f) => s[f].map(fmt).join(", ")).join(" | ")} |`,
   );
 }
 console.log("");
