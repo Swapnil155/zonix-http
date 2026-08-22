@@ -1,11 +1,29 @@
 # HANDOFF
 
-**Phase:** 7 — IN PROGRESS. Done oracle-first: negotiator + accepts/format
-(S14), fresh/range (s1), ETag + 304s (s2), single-range 206 + Accept-Ranges +
-412/If-Range, and compression() (s3). Next: serveStatic memory cache, then
-the M1 ≥2× adjudication in the container; then Phase 7 exit test + gate.
+**Phase:** 7 — BUILD DONE. Oracle-first: negotiator + accepts/format (S14),
+fresh/range (s1), ETag + 304s (s2), 206 + Accept-Ranges + 412/If-Range +
+compression() (s3), serveStatic memory cache (s4). Next: **M1 two-row
+adjudication in the container** (zonix-default vs field; zonix-cache-on,
+labeled opt-in, vs field — ≥2× applies to the cache row), then Phase 7 exit
+test (wire-level 304/206/Content-Encoding) + phase gate.
 
-## Done this session (2026-08-22 — Phase 7 session 3: 206 + compression)
+## Done this session (2026-08-22 — Phase 7 session 4: serveStatic cache)
+
+`serveStatic(root, { cache: { maxBytes } })`, off by default:
+`lib/internal/file-cache.ts` (LRU by bytes, Map-ordered, refuses oversize),
+`sendFile` split into resolve + `#sendEntity` so `ZonixResponse.sendCached`
+runs the same 412/304/206/compression wire logic over cached bytes; one stat
+per hit, mtime/size change → evict + reread; uncached path untouched.
+`test/middleware/static-cache.test.ts` (20): hit/miss/evict/cap boundaries,
+revalidate byte-exact, 304/206/compression from cache, disconnect mid-send,
+**equivalence cached vs uncached: 36 probes × 5 paths on miss and hit,
+wire-identical.** **572/572; hello gate 86,701 → 87,494, median −0.09%,
+range −1.3..+3.3% PASS; file-1kb paired +4.99% (5/5, host degraded regime —
+reported, not claimed).** Section "Phase 7, session 4" in `bench/results.md`.
+For M1: add a cache-on env knob to `bench/servers/zonix.js` (file routes use
+`res.sendFile` today; the cache row needs `serveStatic` with `cache`).
+
+## Done earlier (2026-08-22 — Phase 7 session 3: 206 + compression)
 
 Ranges in `send@0.19.2`'s exact order (412 → 304 → Range → 416/206/200),
 `Accept-Ranges: bytes`, If-Range by tag/date; helpers differential vs send's

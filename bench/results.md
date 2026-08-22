@@ -1877,3 +1877,81 @@ identity` preferring `br, gzip` at equal q. **Skip-if-no-benefit**: an
 Next: the serveStatic memory cache (LRU, byte-capped, mtime-revalidated,
 off by default) on top of the 304/206/compression stack, then the M1 ≥2×
 adjudication in the container.
+
+---
+
+# Phase 7, session 4 (2026-08-22) — serveStatic memory cache, opt-in
+
+_Scope as instructed: `serveStatic(root, { cache: { maxBytes } })` — LRU by
+bytes, raw body + stat + tag per entry, one `stat()` per hit for mtime/size
+revalidation (change → evict + reread), 304/206/compression on top of the
+cached bytes, off by default. Last Phase 7 build session._
+
+## 1. Design as built
+
+- `lib/internal/file-cache.ts` — `FileCache(maxBytes)`: a `Map` in insertion
+  order is the LRU (`get` = delete + re-insert); `set` evicts from the oldest
+  end until the entry fits and refuses an entry larger than the cap outright
+  (dropping any stale entry under that key); accounting is body bytes only.
+  `FileCache.isCurrent(entry, stats)` compares `mtimeMs` and `size`. Imports
+  nothing but a `node:fs` type (structure rule 1).
+- `lib/response.ts` — `sendFile` split into resolve (`#streamFile`: arg
+  checks, stat, type) and `#sendEntity(path, stats, type, cached?, tag?)`:
+  validators → 412 → 304 → Range/416/206 → compression → bytes. With cached
+  bytes nothing touches the disk and the body always goes out buffered
+  (`subarray` for a 206); the precomputed stat tag is used instead of
+  recomputing it. New `@internal` static `ZonixResponse.sendCached(res, path,
+type, stats, body, tag)` is the cache's entry point, through the same
+  rejection guard as `sendFile`.
+- `lib/middleware/serve-static.ts` — with `cache` set, a separate
+  `serveCached` path (the uncached path is untouched): stat the target (index
+  resolution as before), look the file up, **hit + current → send from memory;
+  hit + changed → evict, reread, store, send; miss → read, store when it fits,
+  send.** A file whose size differs from its stat by the time it is read is
+  sent but not cached. Directory requests are keyed by the index file.
+  `cache.maxBytes` must be a positive finite number (INVALID_ARGUMENT).
+
+## 2. Tests — `test/middleware/static-cache.test.ts` (20)
+
+- `FileCache` unit: hit/miss/accounting; eviction order with recency refresh;
+  cap boundaries (exactly the cap fits, one byte over is refused and evicts
+  nothing, a replace re-accounts, oversize replace drops the stale entry);
+  `isCurrent`.
+- Wire (cap 2,500 B over three 1,000 B files, ETag weak, `compression()`
+  mounted): **hit proven by a same-mtime same-size rewrite still serving the
+  old bytes; mtime change → reread byte-exact with Last-Modified following;
+  size change with the same mtime → reread**; eviction at the cap (the
+  touched file stays, the LRU is reread, and rereading evicts the next LRU);
+  a file over the cap is served but never cached; 304 from the cache by tag
+  and by date; 206 slice from the cache, 304 beats it, 416 still fires;
+  gzip/br/deflate on top of cached bytes with the ETag on the raw body, 304
+  under an encoding, 206 never compressed, random bytes identity; HEAD;
+  directory index; a miss falls through to the 404 without touching the
+  error path.
+- Disconnect mid-cached-send: an 8 MB cached body, client destroys the socket
+  after 64 KB — every error seen is `clientDisconnect`, the tripwire is
+  clean, the next request is served.
+- **Equivalence (rule 3): cached vs uncached apps, 31 probes + 5 tag-derived
+  probes × 5 paths (small/large/text/noise/dir), each run on the miss AND the
+  hit — status, every header except `Date`, and the body identical.** The one
+  documented framing difference: a >32 KB compressible file compresses
+  chunked on the uncached (streamed) path and with a `Content-Length` on the
+  cached (buffered) one; there the decoded bodies are compared.
+
+## 3. Gates
+
+- Full suite **572/572** (552 at session start).
+- **Paired hello A/B** (baseline = `b296f50` dist frozen before any build this
+  session, 7 pairs): 86,701 → 87,494, **median of paired deltas −0.09%, range
+  −1.3..+3.3% — ≤2% PASS.** (`ab.mjs` prints its optimization verdict
+  "REVERT (< 1% win)"; the rule-2 question is regression, and there is none.)
+- **Paired file-1kb** (5 pairs, host, DEGRADED-REGIME pre and post, no flip):
+  4,001 → 4,200, median of paired deltas **+4.99%**, range +2.2..+10.0%, 5/5
+  positive. The bench server uses `res.sendFile`, i.e. the refactored
+  uncached path; reported as instructed, not claimed — the host file regime
+  is degraded and the effect is at the noise floor. The container decides.
+
+Next: **M1 two-row adjudication in the container** — zonix-default vs the
+field, and zonix-cache-on (labeled opt-in) vs the field; the ≥2× target
+applies to the cache row. `bench/servers/zonix.js` needs a cache-on variant
+(env knob) for that row.

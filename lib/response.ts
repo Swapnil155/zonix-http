@@ -514,9 +514,31 @@ export class ZonixResponse extends ServerResponse<ZonixRequest> {
    * central error handler instead of becoming an unhandled rejection.
    */
   sendFile(path: string, mime?: string): Promise<void> {
-    const task = this.#streamFile(path, mime);
-    // Attaching this handler also marks `task` as handled, so a caller that
-    // ignores the returned promise cannot produce an unhandled rejection.
+    return this.#guarded(this.#streamFile(path, mime));
+  }
+
+  /**
+   * @internal `serveStatic({ cache })` entry point: the whole `sendFile` wire
+   * logic - validators, 412/304, ranges and 206, compression, HEAD - run over
+   * bytes already in memory, with the stat they were read under, so nothing
+   * is read from disk. `tag` is the precomputed stat tag. Not public API.
+   */
+  static sendCached(
+    res: ZonixResponse,
+    path: string,
+    type: string,
+    stats: Stats,
+    body: Buffer,
+    tag: string,
+  ): Promise<void> {
+    return res.#guarded(res.#sendEntity(path, stats, type, body, tag));
+  }
+
+  /**
+   * Attaching this handler also marks `task` as handled, so a caller that
+   * ignores the returned promise cannot produce an unhandled rejection.
+   */
+  #guarded(task: Promise<void>): Promise<void> {
     task.catch((err: unknown) => {
       // Deferred a tick: if the caller awaited, the chain has already dispatched.
       setImmediate(() => {
@@ -571,6 +593,24 @@ export class ZonixResponse extends ServerResponse<ZonixRequest> {
       );
     }
 
+    await this.#sendEntity(path, stats, type, undefined, undefined);
+  }
+
+  /**
+   * Everything after the file is known to exist: validators, conditional
+   * requests, ranges, compression and the bytes themselves. With `cached`
+   * bytes the body is never read from disk and always goes out buffered;
+   * otherwise files up to `BUFFERED_MAX_BYTES` are read whole and larger
+   * ones streamed.
+   */
+  async #sendEntity(
+    path: string,
+    stats: Stats,
+    type: string,
+    cached: Buffer | undefined,
+    tag: string | undefined,
+  ): Promise<void> {
+    this.#assertOpen(this.sendFile);
     // Validators first, as `send` does for Express: Last-Modified always, a weak
     // stat tag when ETags are on. Then a fresh conditional GET is answered 304
     // before a single byte of the file is read - that is the whole point of
@@ -578,7 +618,7 @@ export class ZonixResponse extends ServerResponse<ZonixRequest> {
     if (!this.hasHeader("Last-Modified"))
       this.setHeader("Last-Modified", stats.mtime.toUTCString());
     if ((this.#etag ?? settingsOf(this.req.socket).etag) !== undefined && !this.hasHeader("ETag")) {
-      this.setHeader("ETag", "W/" + statTag(stats));
+      this.setHeader("ETag", "W/" + (tag ?? statTag(stats)));
     }
     if (!this.hasHeader("Content-Type")) this.setHeader("Content-Type", type);
     if (!this.hasHeader("Accept-Ranges")) this.setHeader("Accept-Ranges", "bytes");
@@ -645,8 +685,8 @@ export class ZonixResponse extends ServerResponse<ZonixRequest> {
       }
     }
 
-    if (stats.size <= BUFFERED_MAX_BYTES) {
-      const file = await readFileAsync(path);
+    if (cached !== undefined || stats.size <= BUFFERED_MAX_BYTES) {
+      const file = cached ?? (await readFileAsync(path));
       // Length comes from the bytes actually read, not from the earlier stat:
       // if the file changed in between, a stale Content-Length would corrupt
       // the response framing. The streamed path cannot make this check.

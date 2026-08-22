@@ -1,7 +1,10 @@
-import { stat } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { ErrorCode, frameworkError } from "../errors/index.js";
+import { statTag } from "../http/etag.js";
 import { DEFAULT_MIME, lookupMime } from "../http/mime.js";
+import { FileCache } from "../internal/file-cache.js";
+import { ZonixResponse } from "../response.js";
 import type { Middleware } from "../types.js";
 
 export interface ServeStaticOptions {
@@ -12,6 +15,14 @@ export interface ServeStaticOptions {
    * through to the next middleware; `"allow"` serves them.
    */
   dotfiles?: "ignore" | "allow";
+  /**
+   * Opt-in in-memory cache of raw file bytes, LRU by bytes up to `maxBytes`.
+   * Off by default. Every hit still costs one `stat()`: an entry whose mtime
+   * or size changed is evicted and reread, so a cached response is never
+   * stale after the file changes. Conditional requests (304), byte ranges
+   * (206) and `compression()` all operate on top of the cached bytes.
+   */
+  cache?: { maxBytes: number };
 }
 
 /**
@@ -33,6 +44,7 @@ export function serveStatic(root: string, options: ServeStaticOptions = {}): Mid
   const prefix = base.endsWith(path.sep) ? base : base + path.sep;
   const index = options.index === undefined ? "index.html" : options.index;
   const allowDotfiles = options.dotfiles === "allow";
+  const cache = compileCache(options.cache);
 
   return function serveStaticMiddleware(req, res, next) {
     const method = req.method?.toUpperCase();
@@ -55,6 +67,11 @@ export function serveStatic(root: string, options: ServeStaticOptions = {}): Mid
     }
 
     if (!allowDotfiles && hasDotfileSegment(target.slice(base.length))) return next();
+
+    if (cache !== undefined) {
+      void serveCached(cache, target, index, res, next);
+      return;
+    }
 
     void (async () => {
       let stats;
@@ -96,6 +113,92 @@ export function serveStatic(root: string, options: ServeStaticOptions = {}): Mid
       }
     })();
   };
+}
+
+/**
+ * The cached path. One `stat()` per request (two for a directory request, as
+ * the plain path also needs): a current entry is sent from memory; a changed
+ * or missing one is read, stored when it fits the cap, and sent from the
+ * bytes just read. A file whose size differs from its stat by the time it is
+ * read is sent but not cached - it was changing under us.
+ */
+async function serveCached(
+  cache: FileCache,
+  target: string,
+  index: string | false,
+  res: ZonixResponse,
+  next: (err?: unknown) => void,
+): Promise<void> {
+  let stats;
+  try {
+    stats = await stat(target);
+  } catch {
+    next();
+    return;
+  }
+  let file = target;
+  if (stats.isDirectory()) {
+    if (index === false) {
+      next();
+      return;
+    }
+    file = path.join(target, index);
+    try {
+      stats = await stat(file);
+    } catch {
+      next();
+      return;
+    }
+    if (!stats.isFile()) {
+      next();
+      return;
+    }
+  } else if (!stats.isFile()) {
+    next();
+    return;
+  }
+
+  const type = lookupMime(file) ?? DEFAULT_MIME;
+  const hit = cache.get(file);
+  if (hit !== undefined && FileCache.isCurrent(hit, stats)) {
+    try {
+      await ZonixResponse.sendCached(res, file, type, stats, hit.body, hit.tag);
+    } catch (err) {
+      next(err);
+    }
+    return;
+  }
+  if (hit !== undefined) cache.delete(file);
+
+  let body: Buffer;
+  try {
+    body = await readFile(file);
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === "ENOENT" || code === "ENOTDIR" || code === "EISDIR") next();
+    else next(err);
+    return;
+  }
+  const tag = statTag(stats);
+  if (body.byteLength === stats.size) cache.set(file, { body, stats, tag });
+  try {
+    await ZonixResponse.sendCached(res, file, type, stats, body, tag);
+  } catch (err) {
+    next(err);
+  }
+}
+
+function compileCache(option: ServeStaticOptions["cache"]): FileCache | undefined {
+  if (option === undefined) return undefined;
+  const maxBytes = option.maxBytes;
+  if (!Number.isFinite(maxBytes) || maxBytes <= 0) {
+    throw frameworkError(
+      `serveStatic(): cache.maxBytes must be a positive number of bytes, received ${String(maxBytes)}`,
+      serveStatic,
+      ErrorCode.INVALID_ARGUMENT,
+    );
+  }
+  return new FileCache(maxBytes);
 }
 
 function forbidden(requestPath: string): Error {
