@@ -1,32 +1,35 @@
 # HANDOFF
 
-**Phase:** 8 — IN PROGRESS (S23, 2026-08-22). Phase 7 CLOSED (M1 MET,
-`cbf9d42`). s1 done: Router class + mounting + 4-arity error middleware +
-maxParamLength. Next: parsers (`urlencoded`/`raw`/`text`), extended query
-parser + pollution/fuzz suites; then the express-port exit test closes P8.
+**Phase:** 8 — IN PROGRESS (S24, 2026-08-22). s1: Router/mounting/error
+middleware/maxParamLength (`ed40a62`). s2: qs-oracle extended query +
+urlencoded/raw/text (this commit). **OPEN: the s2 hello gate was not
+adjudicable — host noisy (Spotify, Docker backend, Task Manager); three runs
++0.60% / −1.06% / +4.20% with pair spreads >10%. FIRST THING NEXT SESSION:
+quiet host; `bench/.baseline-build` is already frozen at the `ed40a62` dist
+(this session's snapshot) and `dist/` is the s2 candidate — run `node
+bench/ab.mjs --scenario=hello --runs=7` directly; record; only then the
+express-port exit test.**
 
-## Done this session (Phase 8 s1)
+## Done this session (Phase 8 s2)
 
-`lib/router/mount.ts`: `Router()` (with/without `new`, `zonix.Router`),
-`use(path?, fn|router|4-arity)`, static segment-aligned prefixes, url rewrite
-
-- `baseUrl`/`originalUrl` (restored on `next()`), router-level then app-level
-  error middleware before `handleErr`, `registerRoute` shared. Radix class →
-  `RouteTable` (alias kept for micro.ts). `maxParamLength` (default 100,
-  decoded length, `*` exempt, `Infinity` off) → 414 `URI_TOO_LONG` in `find`.
-  Hot path: `#globals` prefix unchanged; `#stack` (registration order) only
-  once something is mounted. Deviation to document: every `use()` runs before
-  routes. **626/626; Express wire-diff 23/23 on a two-router app; hello gate
-  86,995 → 87,034, median −0.13%, range −2.5..+3.4% PASS.** Section "Phase 8,
-  session 1" in `bench/results.md`.
+`qs@6.15.3` + `body-parser@1.20.6` pinned exact. `lib/query/extended.ts`
+(linear qs semantics, null-proto, proto/`prototype` dropped, depth 5, sparse
+guard with qs's overflow side-channel, parameterLimit): 117-corpus
+differential + 15-vector pollution suite + 10k×3-seed fuzz green BEFORE
+wiring. `queryParser: "extended"` (Express's `arrayLimit: 1000`, depth 5).
+`lib/body/read.ts` shared listener reader; `parseJSON` refactored onto it
+(its suites unchanged); `urlencoded` (simple = `node:querystring`; extended =
+ours with body-parser's depth 32/`max(100, params)`/1000 → 400/413), `raw`,
+`text` (charset-aware, 415 for non-native charsets). 24 parser tests incl.
+equivalence ×4 and byte-exact limits ×4; 73-probe wire-diff vs Express +
+body-parser identical, deviations asserted. **848/848; echo paired +2.58%.**
+Section "Phase 8, session 2" in `bench/results.md`.
 
 ## Next
 
-Parsers + extended query (depth ≤5, key caps, proto keys dropped,
-null-proto; pollution + fuzz suites, qs as rule-8 oracle), then the
-express-port exit test (real Express example app, import line only).
-Swapnil-side: scorecard ranges in CLAUDE.md; Express docs PR; Fastify
-discussion decision — nothing filed here.
+1. Hello gate re-run on a quiet host (see above). 2. Express-port exit test
+   closes P8. 3. Phase 9 (npm). Swapnil-side: scorecard ranges in CLAUDE.md;
+   Express docs PR; Fastify discussion decision — nothing filed here.
 
 ## Standing measurement rules
 

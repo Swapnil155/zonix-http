@@ -2095,3 +2095,104 @@ originalUrl/params/query/method` — including `/api`, `/api/`, query strings
 
 Next: `urlencoded`/`raw`/`text` parsers, extended query parser with
 pollution + fuzz suites; then the express-port exit test closes Phase 8.
+
+---
+
+# Phase 8, session 2 (2026-08-22) — extended query (qs oracle), urlencoded / raw / text
+
+_Scope: `qs@6.15.3` pinned exact (Express 4.22.2's and body-parser 1.20.6's
+resolution) as the rule-8 oracle; `lib/query/extended.ts` oracle-first;
+`queryParser: "extended"`; `urlencoded` (simple + extended), `raw`, `text` on
+the decision-13 listener reader; wire-diff vs Express + body-parser._
+
+## 1. Extended query parser — `lib/query/extended.ts`
+
+qs's `parse()` reimplemented linearly (one split pass, one balanced-bracket
+scan per key; no regex) with decision 10 fixed rather than optional: every
+object null-prototype; any segment that is an own property of
+`Object.prototype` **or `prototype`** drops its whole key; `depth` 5
+(remainder → one literal segment, or 400 with `strictDepth`); `arrayLimit`
+sparse guard (index ≥ limit → object keyed by index, qs's overflow
+side-channel reproduced with a WeakMap so later `[]`/merges behave
+identically); `parameterLimit` truncates or 413s. `req.query` under
+`queryParser: "extended"` uses **Express's own qs options** (`arrayLimit:
+1000`, depth 5) minus `allowPrototypes: true`; `urlencoded({ extended })`
+uses body-parser's (depth 32 strict → 400, `arrayLimit = max(100, params)`,
+1000 params → 413).
+
+- **Differential** (`test/query/extended.test.ts`): 117-string corpus
+  (duplicates, `[]`, indices at 19/20/21/25/1e12, bracket quirks `a[b`,
+  `a]b`, `a[[b]]`, `[]=`, `]=` precedence, `%5B` folding, malformed escapes,
+  `+`, utf8 sentinels, every `Object.prototype` name) + depth/arrayLimit
+  option sweeps + parameterLimit/strictDepth — **structure-identical to qs**.
+- **Pollution suite**: 15 vectors (`__proto__`, `constructor[prototype]`,
+  `prototype`, encoded forms, `toString`/`__defineGetter__`, buried in
+  arrays) → `({}).polluted` untouched, every object null-prototype, ordinary
+  neighbours survive; explicit: qs keeps `a[prototype]` and emits
+  `constructor` at depth 0 — we drop both. Sparse guard: `a[1000000]=x` is a
+  one-key object. Linear-time check on 80k-char nested/unterminated/many keys.
+- **Fuzz** (`test/fuzz/query.fuzz.ts`): 44 atoms, **10,000 strings × 3
+  seeds**, options sampled (depth 1/2/5, arrayLimit 0/1/2/20) — parity,
+  never throws, no pollution, `Object.prototype` key count unchanged. Green
+  before wiring.
+
+## 2. Body parsers — `lib/body/{read,urlencoded,raw,text}.ts`
+
+- `read.ts`: the one listener-based reader (decision 13) factored out of
+  `parseJSON` — declared-length pre-check, per-chunk byte count with
+  `pause()` on overflow (413 delivered with `Connection: close`), single chunk
+  handed back without a concat, disconnect → `ERR_STREAM_PREMATURE_CLOSE`;
+  plus `toBytes` (no regex), `contentCharset` (linear parameter scan),
+  `nodeEncoding`, `stripBom`. `parseJSON` now sits on it — its 19 existing
+  tests incl. the ECHO-1 equivalence suite passed unchanged.
+- `urlencoded({ extended=false, limit="100kb", parameterLimit=1000, depth=32,
+type })`: simple = `node:querystring` with `maxKeys` (repeated keys →
+  arrays, as body-parser), extended = the parser above; charset must be UTF-8
+  (415); empty body `{}` null-proto; gate via `req.is` semantics.
+- `raw({ limit, type="application/octet-stream" })` → Buffer; `text({ limit,
+type="text/plain", defaultCharset })` → string, charset from Content-Type:
+  UTF-8 / ISO-8859-1 / US-ASCII / UTF-16LE natively, anything else **415
+  before reading** (body-parser reaches for iconv-lite; decision 1 says no).
+- Tests (`test/body/parsers.test.ts`, 24): gates, charsets, parameterLimit
+  at/over, depth 32/33 and configurable, BOM, type lists, setup validation,
+  raw bytes exact, text charsets, prior body respected; **rule-3 equivalence
+  ×4 parsers: one write / dribbled through a multibyte sequence / chunked —
+  byte-identical responses**; **limits ×4: 64 pass, 65 → 413 + close;
+  chunked overflow with no Content-Length → delivered 413 + close; 32+32
+  chunked passes**; disconnect mid-body tagged, tripwire clean.
+- **Wire-diff** (`test/compat/body-parser-diff.test.ts`, 73): same echo
+  routes on zonix and Express + body-parser — 17 form bodies × simple /
+  extended / extended-with-limits (`parameterLimit: 3, depth: 2`), charsets,
+  wrong types, raw bytes, text in four charsets, `text/*`, empty bodies, and
+  `req.query` under `queryParser: "extended"` with nested/indexed/repeated
+  keys — **status, Content-Type and parsed shape identical**. Deviations
+  asserted explicitly: body-parser leaves `req.body = {}` on skipped requests
+  (we leave `undefined`); koi8-r decodes via iconv there, 415 here;
+  `a[constructor][x]`/`a[prototype]` kept there (`allowPrototypes: true`),
+  dropped here.
+
+## 3. Gates
+
+- Full suite **848/848** (626 at session start). Oracle suites green: qs
+  differential + pollution + fuzz (3 seeds), body-parser/Express wire-diff,
+  all earlier oracles.
+- **Paired post-json-echo** (5 pairs, baseline `ed40a62` dist): 54,877 →
+  56,086, median of paired deltas **+2.58%**, range −2.9..+9.3% — reported
+  as instructed (the shared reader replaced parseJSON's inline copy).
+- **Paired hello — NOT ADJUDICATED this session.** Three runs, verbatim:
+  7 pairs: 86,790 → 86,662, median +0.60%, range −9.3..+16.4%;
+  7 pairs (rebuilt after a no-op tidy): 74,118 → 73,837, median −1.06%,
+  range −3.3..+10.2%;
+  9 pairs: 73,389 → 75,654, median +4.20%, range −4.7..+22.8%.
+  Every run breaches the standing intra-config >10% rule; the host dropped
+  ~15% in absolute throughput mid-session with Spotify, Docker Desktop's
+  backend and Task Manager all active (BUSY-MACHINE sampling read 8–14%,
+  under its 20% bar — the bar is too lax for a 7-pair A/B and should carry
+  the spread rule too). Mechanism check: `git diff ed40a62 -- lib` touches
+  the hello hot path nowhere — the app constructor (setup time) and the
+  `req.query` getter (not read by hello) are the only edits outside new
+  files and `body/json.ts`. **Gate status: pending a quiet-host re-run,
+  first thing next session; no claim is made.**
+
+Next: the express-port exit test closes Phase 8 (real Express example app,
+import line only), after the hello gate is re-run clean.

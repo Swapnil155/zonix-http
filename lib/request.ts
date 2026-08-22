@@ -20,7 +20,11 @@ import {
 } from "./negotiation/index.js";
 import { fresh as isFresh } from "./http/fresh.js";
 import { parseRange, type RangeOptions, type Ranges } from "./http/range.js";
+import { parseExtendedQuery, type ParsedQuery } from "./query/extended.js";
 import { parseQuery } from "./query/simple.js";
+
+/** What Express hands qs for `req.query` (minus `allowPrototypes`, which decision 10 forbids). */
+const QUERY_OPTIONS = Object.freeze({ arrayLimit: 1000 });
 import type { ZonixResponse } from "./response.js";
 import type { StringMap, ZonixSettings } from "./types.js";
 
@@ -58,7 +62,7 @@ export class ZonixRequest extends IncomingMessage {
   /** Populated by `cookieParser()`. Shared frozen empty object until then. */
   cookies: StringMap = EMPTY;
 
-  #query: StringMap | undefined = undefined;
+  #query: ParsedQuery | undefined = undefined;
   #path: string | undefined = undefined;
   #compat: CompatCache | undefined = undefined;
   #res: ZonixResponse | undefined = undefined;
@@ -86,12 +90,20 @@ export class ZonixRequest extends IncomingMessage {
 
   /**
    * Parsed query string, computed on first access and cached for the life of the
-   * request. Repeated keys collapse to the last value. The returned object is a
-   * plain mutable object (middleware may amend it); an empty query returns the
-   * shared frozen `EMPTY`.
+   * request. With the default `"simple"` parser repeated keys collapse to the
+   * last value and an empty query returns the shared frozen `EMPTY`; with
+   * `queryParser: "extended"` brackets nest (`a[b][]=1`) under decision 10's
+   * limits. Either way the object has a null prototype.
    */
-  get query(): StringMap {
+  get query(): ParsedQuery {
     if (this.#query !== undefined) return this.#query;
+    if (settingsOf(this.socket).queryParser === "extended") {
+      const url = this.url ?? "";
+      const q = url.indexOf("?");
+      // Express's `query parser: "extended"` options: depth 5, arrayLimit 1000.
+      return (this.#query =
+        q === -1 ? parseExtendedQuery("") : parseExtendedQuery(url.slice(q + 1), QUERY_OPTIONS));
+    }
     return (this.#query = parseQuery(this.url ?? ""));
   }
 

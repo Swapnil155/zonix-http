@@ -1,8 +1,13 @@
 import type { ZonixError } from "./errors/index.js";
 import type { ZonixRequest } from "./request.js";
 import type { ZonixResponse } from "./response.js";
+import type { ParsedQuery, QueryValue } from "./query/extended.js";
 
 export type StringMap = Record<string, string>;
+export type { ParsedQuery, QueryValue };
+
+/** How `req.query` is parsed: flat (`URLSearchParams`, the default) or nested (`qs` semantics). */
+export type QueryParserOption = "simple" | "extended";
 
 export { EMPTY } from "./internal/constants.js";
 export type { ZonixError } from "./errors/index.js";
@@ -87,6 +92,14 @@ export interface ZonixOptions {
    * disables the guard.
    */
   maxParamLength?: number;
+  /**
+   * `"extended"` parses `a[b][]=1` into nested objects and arrays (the
+   * `qs` semantics Express's `query parser` setting offers) with decision
+   * 10's posture: depth 5, indices capped at 1000 (Express's `arrayLimit`),
+   * 1000 parameters, prototype keys dropped, null-prototype output. Default
+   * `"simple"`.
+   */
+  queryParser?: QueryParserOption;
 }
 
 export type EtagGenerator = (body: Buffer) => string | undefined;
@@ -109,4 +122,5 @@ export interface ZonixSettings {
   maxParamLength: number;
   /** Warn on misuse (double `next()`). */
   dev: boolean;
+  queryParser: QueryParserOption;
 }

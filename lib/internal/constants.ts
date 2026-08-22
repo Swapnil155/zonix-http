@@ -38,6 +38,8 @@ export interface AppSettings {
   maxParamLength: number;
   /** Warn on misuse (double `next()`). */
   dev: boolean;
+  /** `req.query` parser: flat or nested. */
+  queryParser: "simple" | "extended";
 }
 
 /** Fastify's default, and a sane bound for any identifier-shaped segment. */
@@ -51,6 +53,7 @@ export const DEFAULT_SETTINGS: AppSettings = Object.freeze({
   etag: undefined,
   maxParamLength: DEFAULT_MAX_PARAM_LENGTH,
   dev: false,
+  queryParser: "simple",
 });
 
 /**

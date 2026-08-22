@@ -78,7 +78,15 @@ export class Zonix {
       etag: compileEtag(options.etag),
       maxParamLength,
       dev: this.#dev,
+      queryParser: options.queryParser ?? "simple",
     };
+    if (settings.queryParser !== "simple" && settings.queryParser !== "extended") {
+      throw frameworkError(
+        `queryParser must be "simple" or "extended", received ${String(settings.queryParser)}`,
+        zonix,
+        ErrorCode.INVALID_ARGUMENT,
+      );
+    }
     this.server = http.createServer(
       { IncomingMessage: ZonixRequest, ServerResponse: ZonixResponse },
       (req, res) => {

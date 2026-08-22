@@ -44,6 +44,12 @@ export const ErrorCode = {
   RANGE_NOT_SATISFIABLE: "ERR_ZONIX_RANGE_NOT_SATISFIABLE",
   /** A decoded path parameter is longer than `maxParamLength` (HTTP 414). */
   URI_TOO_LONG: "ERR_ZONIX_URI_TOO_LONG",
+  /** Extended query/body nesting exceeded the depth limit (HTTP 400). */
+  QUERY_TOO_DEEP: "ERR_ZONIX_QUERY_TOO_DEEP",
+  /** More form parameters than allowed (HTTP 413). */
+  TOO_MANY_PARAMETERS: "ERR_ZONIX_TOO_MANY_PARAMETERS",
+  /** Body charset the parser cannot decode (HTTP 415). */
+  UNSUPPORTED_CHARSET: "ERR_ZONIX_UNSUPPORTED_CHARSET",
 } as const;
 
 export type ErrorCodeValue = (typeof ErrorCode)[keyof typeof ErrorCode];
