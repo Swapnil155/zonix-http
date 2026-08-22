@@ -1516,3 +1516,142 @@ change, one mechanism). **Declined:** nothing attempted beyond it — the
 profile named one mechanism and it was the whole gap. **Reverted:** nothing.
 **Not adopted from cpeak:** dropping the Content-Length pre-check (free),
 prefix-matching the content type (looser gate), dropping BOM handling.
+
+---
+
+# MH-1 2026-08-22 — the mode hunt (container, one bounded session)
+
+_Question, as pre-committed: is Fastify's ~165k fast mode a **mechanism** zonix
+could adopt deterministically, or a **mood**? Kill criteria: inseparable from
+their per-route pattern → record and close (determinism is not for sale); a
+deterministically adoptable call pattern → ordinary rule-5 candidate. Tools
+(committed): `bench/mh1/modes.mjs` — fresh processes under `--trace-opt
+--trace-deopt --cpu-prof` until a FAST and a COMMON one are caught, plus zonix
+under the same flags, then a diff at the shared `node:http` sites;
+`bench/mh1/variant.js` + `bench/mh1/suppressor.mjs` — a Fastify server that
+spans, by env knobs, the distance from `bench/servers/fastify.js` to the
+minimal repro, sampled 20 fresh processes per variant, variants interleaved.
+Container `zonix-bench`, `--cpus=8`, regime clean (590–594k opens/sec @
+5.2–5.7×), host quiet (6.3%) on every run._
+
+## 1. The optimization states at the shared call sites — and where the mode lives
+
+**At 6 routes this session offered only the fast mode: 14/14 traced processes
+at 157,984–171,936** (Session 14 had offered 0/20 — the availability is
+per-session). **At 200 routes both modes appeared: 6 common (105,744–112,064),
+then 1 fast (168,480)**; zonix under the same flags 149,568. That pair is the
+diff the spec asked for.
+
+**Tiers:** every shared `node:http` site reached TURBOFAN in all three processes
+— `parserOnIncoming`, `parserOnHeadersComplete/MessageComplete`,
+`onParserExecute`, `_storeHeader`, `_send`, `writeHead`, `end`, `writevGeneric`,
+`clearBuffer`, `writeOrBuffer`, `Readable.read`, `emit`, **`nextTick`**,
+`processTicksAndRejections`, `afterWrite`, `resOnFinish`. 150 / 152 / 138
+functions reached TURBOFAN (fast / common / zonix); MAGLEV completions 0 in
+all (Node 22 reports only TurboFan completions under `--trace-opt`).
+
+**Deopts:** 31 / 29 / 39 — identical in kind (`IncomingMessage.get | wrong
+map` ×7 / ×7 / ×9, then one-off warmup bailouts in Node internals). The only
+asymmetries: `_flush` and `listenerCount` wrong-map ×1 in the fast process,
+`removeListener` keyed-access ×1 in the common one. Nothing re-deopts under
+load in any of them.
+
+**Self-time diff, fast vs common, every frame ≥ 0.5pp apart:**
+
+| frame                            |   fast % |  common % |  zonix % |
+| -------------------------------- | -------: | --------: | -------: |
+| **`nextTick` @ task_queues:113** | **0.36** | **10.25** | **0.62** |
+| `writev`                         |    56.98 |     51.84 |    56.49 |
+| (idle)                           |    11.02 |      8.86 |    10.12 |
+| (program)                        |     5.40 |      3.43 |     4.48 |
+| (garbage collector)              |     3.03 |      2.04 |     4.06 |
+| `writevGeneric`                  |     2.82 |      3.57 |     3.26 |
+
+That is the whole list. **The mode is one frame: `process.nextTick`'s own body
+costs ~28× more per unit of work in the common process** — same function, same
+TurboFan tier, no deopt — and the fast process spends the recovered ~10% on
+`writev` and idle, i.e. on requests. No Fastify frame and no find-my-way frame
+moved (`serialize` 0.91 vs 0.96, `find` 0.84 vs 0.46, `routeHandler` 0.43 vs
+<0.3). This is the Session 6 profile signature (`nextTick` 1% → 22%) reproduced
+in the second environment with the tier/deopt question answered: **it is not a
+tiering or bailout state; it is the per-call cost of an optimized Node-core
+function changing between processes** — an inline-cache/feedback state inside
+`nextTick` (its tick-object literal, queue push, or async-hooks checks) that
+`--trace-opt`/`--trace-deopt` cannot see because the function never leaves
+TurboFan. Naming the IC needs `--log-ic` + V8's IC processor on a fast/common
+pair; the locus is now narrow enough for that to be a one-hour job, and it is
+**Node core + Fastify's nextTick call pattern**, not ours. zonix's `nextTick`
+share is 0.47–0.62% in every process ever profiled, 6 or 200 routes, one path
+or ten — zonix lives on the fast side of this state, deterministically.
+
+## 2. The harness suppressor — named, then corrected by its own control
+
+Strip-diff of `bench/servers/fastify.js` at 200 routes against the minimal
+repro (fast band ≥ 131,539 = 1.3× the slowest process; common 101–112k; fast
+159–171k):
+
+| variant                   | fixed routes                 | scale | distinct paths |   fast / 20 |
+| ------------------------- | ---------------------------- | ----: | -------------: | ----------: |
+| R6 (minimal control)      | none                         |     6 |              1 | **20 / 20** |
+| R200 (minimal control)    | none                         |   200 |              1 |  **3 / 20** |
+| A-bench (= matrix config) | hello,users,chain,files,echo |   200 |         **10** |  **0 / 20** |
+| A1-bench, one path        | hello,users,chain,files,echo |   200 |              1 |      2 / 20 |
+| B-minimal, ten paths      | none                         |   200 |         **10** |  **0 / 20** |
+| C-hello+users             | hello,users                  |   200 |              1 |      2 / 20 |
+| D-chain                   | chain (10 onRequest hooks)   |   200 |              1 |      4 / 20 |
+| E-files                   | file/small, file/large       |   200 |              1 |      2 / 20 |
+| F-echo                    | POST /echo                   |   200 |              1 |      2 / 20 |
+
+No fixed route is implicated: the full bench server at one path behaves like
+the minimal server at one path. Both ten-path variants read 0/20. **The
+"0/13-fast ingredient" of the matrix was `scaleProbePaths(200, 10)`** — the ten
+cycling request paths the W2 scenario uses on purpose so a router benchmark
+does not measure one lucky table position.
+
+Then the traffic-shape controls, to test "it is traffic diversity":
+
+| variant                 | scale | distinct paths |                                                                                 fast / 20 | bands               |
+| ----------------------- | ----: | -------------: | ----------------------------------------------------------------------------------------: | ------------------- |
+| R6                      |     6 |              1 |                                                                               **20 / 20** | 158–173k            |
+| R6-2paths               |     6 |              2 |                                                                               **20 / 20** | 159–169k            |
+| R6-6paths (every route) |     6 |              6 |                                                                               **20 / 20** | 156–165k            |
+| R200                    |   200 |              1 | **8 / 20** (9 by the 1.3× rule; one 113k process sits on the floor set by an 87k outlier) | 105–111k / 160–170k |
+| R200-2paths             |   200 |              2 |                                                                                **2 / 20** | 103–110k / 160–162k |
+| R200-10paths            |   200 |             10 |                                                                                **0 / 20** | 87–110k             |
+
+**Diversity alone is not it: at 6 routes, hitting every route reads 20/20
+fast.** The suppressor is the interaction **table size × distinct routes
+requested**: at 200 routes the fast-mode rate decays 8/20 → 2/20 → 0/20 as the
+traffic touches 1 → 2 → 10 routes, while at 6 routes it is unconditional.
+Consistent with §1: something about a large table makes the `nextTick` state
+fragile, and each additional route the process actually serves is another
+chance to tip it. What precisely — 200 route contexts, 200 handler closures,
+200 `find-my-way` nodes — is not resolvable with these instruments and is not
+ours.
+
+**zonix in every one of these states: 147–154k, one path or ten, 6 routes or
+200, every session — no modes.**
+
+## 3. Verdict against the pre-committed kill criteria: MOOD → record and close
+
+- The mode is a **process-level state inside Node core** (`process.nextTick`'s
+  per-call cost), in the same optimization tier either way, whose availability
+  depends on Fastify's table size, the number of routes traffic touches, and
+  the session. It is **inseparable from their per-route pattern** in the exact
+  sense the criterion named: nothing in it is a call shape zonix could hold
+  monomorphic, because zonix already sits on the fast side of it in every
+  process measured.
+- **There is nothing to adopt.** It does not enter the rule-5 pipeline.
+- **Determinism was not for sale, and the arithmetic stands:** under traffic
+  that touches more than one route of a real table, Fastify's fast mode was
+  0/40 in this session's two ten-path variants; zonix's deterministic ~147k at
+  200 routes against their ~107k common mode (1.37×) is the number real
+  workloads see.
+
+**MH-1 is closed.** `ISSUE.md` status updated: the table-size framing is dead
+(falsified last session), the bimodal framing is now **located** —
+`process.nextTick` self-time 0.4% → 10% with no tier or deopt change,
+throughput −35%, rate depending on table size × routes requested — and that is
+a legitimate, narrow observation to put to Fastify as a discussion issue with
+`modes.mjs` + `suppressor.mjs` attached. Swapnil decides; nothing is filed
+from this repo.

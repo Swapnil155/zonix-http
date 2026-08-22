@@ -1,24 +1,28 @@
 # DRAFT — Fastify issue: throughput drops ~30% once the route table crosses ~50–100 routes
 
-> **Status: NOT FILABLE AS A TABLE-SIZE ISSUE (2026-08-22, post-audit
-> session) — the minimal repro does not reproduce a table-size effect.**
-> `ROUNDS=20 repro.mjs 6 200` in the pinned container: the fast mode (~165k)
-> was reached by **8/20 six-route processes and 9/20 two-hundred-route
-> processes** — same rate, independent of table size; a per-process,
-> per-session lottery (Session 14 read 0/20 + 0/20 in the same container).
-> The earlier "never observed with ~200 routes" statement is **withdrawn**.
-> What remains is narrower: in _our full bench server_
-> (`bench/servers/fastify.js`) the 200-route configuration has read the
-> common band in 13/13 container processes while the 6-route configuration
-> read the fast band 16/16 in the same matrices — a ~0.03% coincidence at
-> a 45% lottery rate, so that effect is real but belongs to that server's
-> construction at 200 routes, not to Fastify + 200 routes in general.
-> **Before anything is filed:** a V8-level explanation (`--trace-deopt` /
-> `--trace-ic` of the bench server at 6 vs 200 routes) that names what denies
-> the fast mode. Without a mechanism there is nothing to ask upstream to fix.
-> The bimodal per-process throughput itself (fast vs common, ~55% apart, same
-> code, same table) may be worth a separate, smaller report once its trigger
-> is understood. Swapnil decides.
+> **Status: MH-1 CLOSED (2026-08-22) — the mode is LOCATED; filable as a
+> discussion issue, not as a table-size bug. Swapnil decides.**
+> In the pinned container, fresh 200-route processes land in two modes (this
+> session 8/20 fast ~165k, 12/20 common ~107k at one requested path). A
+> fast/common pair traced with `--trace-opt --trace-deopt --cpu-prof`
+> (`bench/mh1/modes.mjs`) differs in exactly ONE frame: **`process.nextTick`
+> self-time 0.36% (fast) vs 10.25% (common)** — same TurboFan tier, same
+> deopts, every other frame within ~2pp; the fast process spends the
+> recovered 10% in `writev`/idle. It is a per-process state inside Node
+> core's `nextTick`, not a Fastify or find-my-way frame. Its availability
+> depends on **table size × routes touched** (`bench/mh1/suppressor.mjs`, 20
+> fresh processes each): 6 routes 20/20 fast whether 1, 2 or all 6 routes are
+> requested; 200 routes 8/20 at one path, 2/20 at two, **0/20 at ten** — and
+> per session (Session 14: 0/20 everywhere). A zonix control reads 147–154k
+> with `nextTick` at 0.5–0.6% in every state and session — no modes.
+> What an upstream report can honestly say: "with ~200 routes and traffic
+> touching several of them, Fastify 5.12.1 on Node 22.20.0 settles in a state
+> where `process.nextTick`'s own cost rises from ~0.4% to ~10% of CPU and
+> throughput drops ~35%, with no tier or deopt change; small tables reach the
+> fast state unconditionally." Naming the IC inside `nextTick` needs
+> `--log-ic` on a fast/common pair — a one-hour job now that the locus is one
+> function. The earlier titles below are superseded; nothing is filed from
+> this repo.
 
 ## Proposed title (to be rewritten in the bimodal framing)
 

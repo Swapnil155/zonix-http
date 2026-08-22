@@ -3,7 +3,23 @@
 **Phase:** 7 — OPEN. Negotiator landed and wired; tests green. Next: ETag/fresh
 → 304, range/206, compression, serveStatic cache (the W1/M1 stack).
 
-## Done this session (2026-08-22 — ECHO-1, the cpeak echo gap)
+## Done this session (2026-08-22 — MH-1, the mode hunt: CLOSED as mood)
+
+`bench/mh1/{variant.js,suppressor.mjs,modes.mjs}`. Container, 3 runs, clean.
+**Located:** a 200-route fast/common pair under --trace-opt/--trace-deopt/
+--cpu-prof differs in ONE frame — `process.nextTick` self 0.36% vs 10.25%,
+same TurboFan tier, same deopts; zonix 0.62% in every process ever profiled.
+**Suppressor named, then sharpened:** the matrix's 10-path cycling traffic
+(both bench server and minimal read 0/20 at 200 routes; every 1-path variant
+2–4/20; no fixed route implicated); controls show it is table size × routes
+touched (6 routes: 20/20 fast at 1, 2 or 6 paths; 200 routes: 8/20 → 2/20 →
+0/20 at 1/2/10 paths). **Verdict: MOOD — nothing to adopt; zonix already sits
+on the fast side deterministically (147–154k, no modes). Closed.** ISSUE.md
+status rewritten with the located mechanism; Swapnil decides on a discussion
+issue. Section "MH-1 2026-08-22" in `bench/results.md`. **Phase 7 opens next
+session — firmly.**
+
+## Done earlier (2026-08-22 — ECHO-1, the cpeak echo gap)
 
 Profile named it: `for await` over the request stream (async iterator + eos +
 async_hooks bind + microtask per chunk + GC). cpeak reads with listeners; its
