@@ -2196,3 +2196,80 @@ type="text/plain", defaultCharset })` → string, charset from Content-Type:
 
 Next: the express-port exit test closes Phase 8 (real Express example app,
 import line only), after the hello gate is re-run clean.
+
+---
+
+# Phase 8, session 3 (2026-08-22) — s2 gate re-adjudicated; express-port exit test; PHASE 8 CLOSED
+
+## 1. The s2 hello gate, re-adjudicated (rule 2 as amended: spread voids, CPU advises)
+
+Host: Docker Desktop backend stopped (`com.docker.backend` killed, WSL shut
+down; Spotify and Task Manager were left running - they are the user's).
+`bench/ab.mjs` now prints both configs' per-run values and intra-config
+spreads and stamps **SPREAD-VOID** when either exceeds 10%; `--mode=gate`
+verdicts against the −2% budget. Baseline = the frozen `ed40a62` dist;
+candidate = the s2 dist (`0f304fd`).
+
+| run     | baseline (rps, 7)                                             | spread | candidate (rps, 7)                                            | spread | median of paired deltas | range       | verdict          |
+| ------- | ------------------------------------------------------------- | -----: | ------------------------------------------------------------- | -----: | ----------------------: | ----------- | ---------------- |
+| s2 gate | 82,669 82,182 82,797 80,122 77,434 77,728 77,728 → **80,122** |   6.7% | 82,886 82,502 80,800 82,720 81,389 81,363 77,382 → **81,389** |   6.8% |              **+0.39%** | −2.4..+5.1% | **VALID — PASS** |
+
+(An earlier 7-pair run this session, before the spread printout existed:
+86,995 → 86,368, median +0.22%, pair range −8.3..+2.9% — consistent, but
+unverifiable for spread and therefore not the record.)
+
+## 2. Exit test — `test/compat/express-port/` + `test/compat/express-port.test.ts`
+
+`app.express.mjs` is a real Express 4 application (≈100 lines): JSON +
+form parsing (`express.json({ limit })`, `express.urlencoded({ extended })`),
+`express.static` on a mount, two routers with one nested (`/api` →
+`/users`, `/admin`), an auth middleware scoped to the admin mount, params,
+query, `res.set`/`status`/`type`/`send`/`json`, router-level and app-level
+four-arity error middleware, `app.all("/*")` catch-all 404, `app.disable`/
+`app.set`. `app.zonix.mjs` is the same file with **line 1 changed** - the
+test asserts the two sources are identical from line 2 on. Both are run and
+diffed for a **41-request corpus** (status, Content-Type, Location,
+X-Api-Version, Content-Length, JSON/text bodies; the in-memory db mutated in
+the same order on both): **41/41 identical** (plus the source-diff assertion
+and one explicit-deviation test → 43/43).
+
+What the port surfaced, and what landed for it (all registration-time):
+
+- `app.set/get(name)/enable/disable/enabled/disabled` - Express's settings
+  API; `trust proxy`, `etag`, `query parser`, `subdomain offset` take effect
+  (same knobs as the constructor options), any other name is stored as
+  given, `x-powered-by` accepted and ignored. `app.get(name)` with one
+  string argument reads a setting, as in Express.
+- `app.all()` / `router.all()`; `zonix.json/urlencoded/raw/text/static/
+Router` on the default export (built in `lib/index.ts`, so core still
+  imports nothing from feature dirs).
+- **HEAD precedence fix:** a HEAD table that matched only through a tail
+  wildcard (`app.all("/*")` registers HEAD too) now yields to a specific GET
+  route, as Express's registration order does - found by `HEAD /health`
+  answering 404.
+- **`req.body = {}` on a skipped request**, as body-parser leaves it: a
+  ported handler doing `req.body.name` on a non-matching request would have
+  thrown on zonix. An internal "defaulted" flag lets a later parser in the
+  chain still parse (`text()` then `raw()`), while a body a parser actually
+  produced is left alone. The body-parser wire-diff lost its normalisation
+  and still passes (now identical on that point); `parseJSON`'s two
+  pass-through tests updated to `{}`.
+- Deviations kept and asserted: Express 4 defaults `query parser` to
+  extended, zonix (like Express 5) to simple - the example sets it
+  explicitly; `charset=UTF-8` (send/serve-static) vs `charset=utf-8` compared
+  case-insensitively (equal by RFC).
+
+## 3. Gates
+
+- Full suite **894/894** (848 at session start); all oracle suites green.
+- s2 hello gate: **VALID, PASS** (above).
+- s3-build hello gate (settings API, `all`, HEAD branch, `#bodyDefaulted`
+  field; candidate rebuilt, same baseline): two runs, both **SPREAD-VOID**
+  by the new rule - 79,648 → 78,739, median −0.10%, candidate spread 10.0%;
+  75,834 → 76,013, median +1.24%, candidate spread 10.6%. No regression
+  signal, no verdict. **Re-run at the Phase 9 open on a quiet host**; the
+  changes are registration-time plus one declared request field and a HEAD-
+  only branch.
+
+**PHASE 8 CLOSED** on the s2 gate + exit test + suite, with the s3 gate
+re-run carried as the first Phase 9 item.

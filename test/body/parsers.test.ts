@@ -68,7 +68,7 @@ describe("urlencoded(): simple", () => {
     assert.deepEqual(r.body.body, { "a[b]": "1", "a[c]": "2" });
   });
 
-  test("an empty body is {} with a null prototype; other types and GETs pass through", async () => {
+  test("an empty body is {} with a null prototype; other types get body-parser's {}", async () => {
     const a = app(urlencoded());
     const r = await request(a.server)
       .post("/echo")
@@ -81,7 +81,7 @@ describe("urlencoded(): simple", () => {
       .set("Content-Type", "application/json")
       .send('{"a":1}')
       .expect(200);
-    assert.deepEqual(json.body, { type: "undefined", body: null });
+    assert.deepEqual(json.body, { type: "object", proto: false, body: {} }); // {} left behind, as body-parser
   });
 
   test("a non-UTF-8 charset is a 415 before the body is read", async () => {
@@ -195,7 +195,7 @@ describe("raw() and text()", () => {
       .set("Content-Type", "text/plain")
       .send("x")
       .expect(200);
-    assert.equal(skip.body.type, "undefined");
+    assert.deepEqual(skip.body, { type: "object", proto: false, body: {} });
     const empty = await request(a.server)
       .post("/echo")
       .set("Content-Type", "application/octet-stream")
@@ -265,7 +265,7 @@ describe("raw() and text()", () => {
       .set("Content-Type", "text/html")
       .send("<p>")
       .expect(200);
-    assert.equal(skip.body.type, "undefined");
+    assert.deepEqual(skip.body, { type: "object", proto: false, body: {} });
     const html = app(text({ type: "text/*" }));
     const got = await request(html.server)
       .post("/echo")
@@ -275,7 +275,7 @@ describe("raw() and text()", () => {
     assert.equal(got.body.body, "<p>");
   });
 
-  test("a body already set by an earlier parser is left alone", async () => {
+  test("a parsed body is left alone; a skipping parser's {} does not block a later one", async () => {
     const a = makeApp();
     a.post("/echo", text(), raw({ type: "*/*" }), (req, res) => res.json({ t: typeof req.body }));
     await request(a.server)
@@ -283,6 +283,15 @@ describe("raw() and text()", () => {
       .set("Content-Type", "text/plain")
       .send("x")
       .expect(200, { t: "string" });
+    const b = makeApp();
+    b.post("/echo", text(), raw(), (req, res) =>
+      res.json({ t: Buffer.isBuffer(req.body) ? "buffer" : typeof req.body }),
+    );
+    await request(b.server)
+      .post("/echo")
+      .set("Content-Type", "application/octet-stream")
+      .send(Buffer.from([1, 2]))
+      .expect(200, { t: "buffer" });
   });
 });
 

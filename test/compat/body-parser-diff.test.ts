@@ -3,8 +3,7 @@
  * `queryParser: "extended"` against real Express 4.22.2 + body-parser 1.20.6
  * (rule 8): the same echo routes on both, a corpus of bodies and content
  * types, status + Content-Type + parsed shape compared. Deliberate deviations
- * (prototype keys, `req.body` on skipped requests, inflate) are asserted
- * explicitly at the end.
+ * (prototype keys, iconv charsets) are asserted explicitly at the end.
  */
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
@@ -67,17 +66,6 @@ function buildExpress(): any {
 
 const FORM = "application/x-www-form-urlencoded";
 
-/**
- * body-parser sets `req.body = {}` on every request it skips; zonix leaves it
- * `undefined` (a parser that did not run leaves no trace). Asserted as a
- * deviation below; folded here so everything else still diffs byte-for-byte.
- */
-function normalizeSkipped(echoed: any): any {
-  if (echoed && echoed.kind === "undefined" && echoed.body === null) {
-    return { ...echoed, kind: "object", body: {} };
-  }
-  return echoed;
-}
 const BODIES: Array<[string, string | Buffer]> = [
   ["a=1&b=two+words&c=%E2%9C%93", ""],
   ["a=1&a=2&a=3", ""],
@@ -176,48 +164,27 @@ describe("body parsers + extended query: wire-diff vs Express 4.22.2 + body-pars
       const [a, b] = await Promise.all([send(mine.port, p), send(theirs.port, p)]);
       assert.equal(a.status, b.status, `status (theirs: ${b.body})`);
       assert.equal(a.type, b.type, "content-type");
-      const actual = JSON.parse(a.body);
-      // Only a mounted parser can leave body-parser's `{}` behind.
-      assert.deepEqual(
-        p.method === "GET" ? actual : normalizeSkipped(actual),
-        JSON.parse(b.body),
-        "body",
-      );
+      assert.deepEqual(JSON.parse(a.body), JSON.parse(b.body), "body");
     });
   }
 });
 
 describe("body parsers: deliberate deviations, asserted", () => {
-  test("a skipped request: body-parser leaves {} behind, zonix leaves undefined; koi8-r: iconv vs 415", async () => {
+  test("koi8-r: body-parser decodes through iconv-lite; zonix answers 415 (decision 1)", async () => {
     const mine = await start(buildZonix());
     const server = buildExpress().listen(0, "127.0.0.1");
     await new Promise<void>((r) => server.once("listening", () => r()));
     const port = (server.address() as { port: number }).port;
     try {
-      const post = (p: number, path: string, type: string) =>
-        fetch(`http://127.0.0.1:${p}${path}`, {
+      const post = (p: number) =>
+        fetch(`http://127.0.0.1:${p}/text`, {
           method: "POST",
-          headers: { "content-type": type },
+          headers: { "content-type": "text/plain; charset=koi8-r" },
           body: "x",
-        }).then(async (r) => ({ status: r.status, body: (await r.json()) as any }));
-      const [ours, theirs] = await Promise.all([
-        post(mine.port, "/raw", "text/plain"),
-        post(port, "/raw", "text/plain"),
-      ]);
-      assert.deepEqual(
-        { kind: ours.body.kind, body: ours.body.body },
-        { kind: "undefined", body: null },
-      );
-      assert.deepEqual(
-        { kind: theirs.body.kind, body: theirs.body.body },
-        { kind: "object", body: {} },
-      );
-      const [k1, k2] = await Promise.all([
-        post(mine.port, "/text", "text/plain; charset=koi8-r"),
-        post(port, "/text", "text/plain; charset=koi8-r"),
-      ]);
-      assert.equal(k1.status, 415); // decision 1: no iconv-lite
-      assert.equal(k2.status, 200);
+        }).then((r) => r.status);
+      const [k1, k2] = await Promise.all([post(mine.port), post(port)]);
+      assert.equal(k1, 415);
+      assert.equal(k2, 200);
     } finally {
       await mine.close();
       await new Promise<void>((r) => server.close(() => r()));

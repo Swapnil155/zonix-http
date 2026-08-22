@@ -2,6 +2,7 @@ import { parse as parseSimple } from "node:querystring";
 import { typeIs } from "../compat/request.js";
 import { ErrorCode, frameworkError } from "../errors/index.js";
 import { parseExtendedQuery, type ParsedQuery } from "../query/extended.js";
+import { ZonixRequest } from "../request.js";
 import type { Middleware } from "../types.js";
 import { contentCharset, readBody, stripBom, toBytes } from "./read.js";
 
@@ -69,8 +70,12 @@ export function urlencoded(options: UrlencodedOptions = {}): Middleware {
       };
 
   return function urlencodedMiddleware(req, _res, next) {
-    if (req.body !== undefined) return next();
-    if (!typeIs(req.headers, types)) return next();
+    if (!ZonixRequest.bodyIsOpen(req)) return next();
+    if (!typeIs(req.headers, types)) {
+      ZonixRequest.defaultBody(req);
+      return next();
+    }
+    ZonixRequest.defaultBody(req);
     const charset = contentCharset(req.headers) ?? "utf-8";
     if (charset !== "utf-8" && charset !== "utf8") {
       return next(
@@ -85,7 +90,7 @@ export function urlencoded(options: UrlencodedOptions = {}): Middleware {
     readBody(req, limit, (err, buf) => {
       if (err !== undefined) return next(err);
       if (buf.byteLength === 0) {
-        req.body = Object.create(null);
+        ZonixRequest.bodyParsed(req, Object.create(null));
         return next();
       }
       let parsed: ParsedQuery;
@@ -94,7 +99,7 @@ export function urlencoded(options: UrlencodedOptions = {}): Middleware {
       } catch (e) {
         return next(e);
       }
-      req.body = parsed;
+      ZonixRequest.bodyParsed(req, parsed);
       next();
     });
   };

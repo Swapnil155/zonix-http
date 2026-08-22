@@ -1,4 +1,5 @@
 import { typeIs } from "../compat/request.js";
+import { ZonixRequest } from "../request.js";
 import type { Middleware } from "../types.js";
 import { readBody, toBytes } from "./read.js";
 import { normalizeTypes } from "./urlencoded.js";
@@ -21,11 +22,14 @@ export function raw(options: RawOptions = {}): Middleware {
   const limit = toBytes(options.limit ?? "100kb", "raw()");
   const types = normalizeTypes(options.type, "application/octet-stream");
   return function rawMiddleware(req, _res, next) {
-    if (req.body !== undefined) return next();
-    if (!typeIs(req.headers, types)) return next();
+    if (!ZonixRequest.bodyIsOpen(req)) return next();
+    if (!typeIs(req.headers, types)) {
+      ZonixRequest.defaultBody(req);
+      return next();
+    }
     readBody(req, limit, (err, buf) => {
       if (err !== undefined) return next(err);
-      req.body = buf;
+      ZonixRequest.bodyParsed(req, buf);
       next();
     });
   };

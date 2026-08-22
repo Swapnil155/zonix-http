@@ -305,6 +305,12 @@ export class MountableRouter {
   declare patch: (path: string, ...rest: [...Middleware[], Handler]) => this;
   declare delete: (path: string, ...rest: [...Middleware[], Handler]) => this;
   declare head: (path: string, ...rest: [...Middleware[], Handler]) => this;
+  /** Register `path` for every HTTP method at once (Express's `router.all`). */
+  all(path: string, ...rest: [...Middleware[], Handler]): this {
+    for (const method of METHODS) this.route(method, path, ...rest);
+    return this;
+  }
+
   declare options: (path: string, ...rest: [...Middleware[], Handler]) => this;
 }
 

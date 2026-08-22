@@ -5,7 +5,28 @@
  * core (`app.ts`, `request.ts`, `response.ts`, `router/`) imports only those;
  * feature directories import core and each other's entry points only.
  */
-export { Zonix, default } from "./app.js";
+import createApp from "./app.js";
+import { parseJSON } from "./body/json.js";
+import { raw } from "./body/raw.js";
+import { text } from "./body/text.js";
+import { urlencoded } from "./body/urlencoded.js";
+import { serveStatic } from "./middleware/serve-static.js";
+
+export { Zonix } from "./app.js";
+
+/**
+ * The default export is the app factory, carrying the same helpers Express
+ * hangs off its own (`express.json()`, `express.Router()`, `express.static()`
+ * ...) so an Express app ports by changing only its import line.
+ */
+const zonix = Object.assign(createApp, {
+  json: parseJSON,
+  urlencoded,
+  raw,
+  text,
+  static: serveStatic,
+});
+export default zonix;
 
 export { ZonixRequest } from "./request.js";
 export { Router, type RouterFactory } from "./router/mount.js";

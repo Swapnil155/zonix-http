@@ -181,15 +181,30 @@ for (const name of names) {
   const worst = Math.min(...paired) * 100;
   const best = Math.max(...paired) * 100;
 
+  // Rule 2 (amended): an intra-config spread above 10% voids the run - the
+  // machine was not quiet, whatever the CPU sampler said. Both spreads are
+  // printed with their raw values so the record shows why.
+  const spreadOf = (xs) => ((Math.max(...xs) - Math.min(...xs)) / median(xs)) * 100;
+  const SPREAD_VOID = 10;
+  const spreadA = spreadOf(a);
+  const spreadB = spreadOf(b);
+  const voided = spreadA > SPREAD_VOID || spreadB > SPREAD_VOID;
+  const list = (xs) => xs.map((x) => Math.round(x).toLocaleString("en-US")).join(", ");
+
   console.log("");
-  console.log(`  baseline  median ${Math.round(mA).toLocaleString("en-US")} rps`);
-  console.log(`  candidate median ${Math.round(mB).toLocaleString("en-US")} rps`);
+  console.log(
+    `  baseline  median ${Math.round(mA).toLocaleString("en-US")} rps  [${list(a)}]  spread ${spreadA.toFixed(1)}%`,
+  );
+  console.log(
+    `  candidate median ${Math.round(mB).toLocaleString("en-US")} rps  [${list(b)}]  spread ${spreadB.toFixed(1)}%`,
+  );
   console.log(
     `  delta ${deltaOfMedians >= 0 ? "+" : ""}${deltaOfMedians.toFixed(2)}% (median of paired deltas ` +
       `${medianOfDeltas >= 0 ? "+" : ""}${medianOfDeltas.toFixed(2)}%, range ${worst.toFixed(1)}%..${best.toFixed(1)}%)`,
   );
-  const verdict =
-    mode === "gate"
+  const verdict = voided
+    ? `SPREAD-VOID (intra-config spread ${Math.max(spreadA, spreadB).toFixed(1)}% > ${SPREAD_VOID}%: not a quiet machine; rerun)`
+    : mode === "gate"
       ? medianOfDeltas >= REGRESSION_BUDGET
         ? `PASS (budget ${REGRESSION_BUDGET}%, measured ${medianOfDeltas.toFixed(2)}%)`
         : `FAIL (worse than the ${REGRESSION_BUDGET}% budget)`

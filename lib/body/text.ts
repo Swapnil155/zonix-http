@@ -1,4 +1,5 @@
 import { typeIs } from "../compat/request.js";
+import { ZonixRequest } from "../request.js";
 import type { Middleware } from "../types.js";
 import { contentCharset, nodeEncoding, readBody, toBytes, unsupportedCharset } from "./read.js";
 import { normalizeTypes } from "./urlencoded.js";
@@ -25,14 +26,18 @@ export function text(options: TextOptions = {}): Middleware {
   const types = normalizeTypes(options.type, "text/plain");
   const defaultCharset = (options.defaultCharset ?? "utf-8").toLowerCase();
   return function textMiddleware(req, _res, next) {
-    if (req.body !== undefined) return next();
-    if (!typeIs(req.headers, types)) return next();
+    if (!ZonixRequest.bodyIsOpen(req)) return next();
+    if (!typeIs(req.headers, types)) {
+      ZonixRequest.defaultBody(req);
+      return next();
+    }
+    ZonixRequest.defaultBody(req);
     const charset = contentCharset(req.headers) ?? defaultCharset;
     const encoding = nodeEncoding(charset);
     if (encoding === undefined) return next(unsupportedCharset(charset));
     readBody(req, limit, (err, buf) => {
       if (err !== undefined) return next(err);
-      req.body = buf.toString(encoding);
+      ZonixRequest.bodyParsed(req, buf.toString(encoding));
       next();
     });
   };

@@ -501,3 +501,54 @@ describe("maxParamLength guard", () => {
     await request(app.server).get(long).expect(200);
   });
 });
+
+describe("Express surface for ported apps: settings API, all(), default-export helpers", () => {
+  test("set/get(name)/enable/disable/enabled/disabled; trust proxy and query parser take effect", async () => {
+    const app = makeApp();
+    assert.equal(app.get("x-powered-by"), false);
+    assert.equal(app.enabled("etag"), false);
+    app.set("views", "/tmp/views");
+    assert.equal(app.get("views"), "/tmp/views");
+    app.enable("strict routing");
+    assert.equal(app.enabled("strict routing"), true);
+    app.disable("strict routing");
+    assert.equal(app.disabled("strict routing"), true);
+    assert.throws(() => app.set("query parser", "weird"), { code: ErrorCode.INVALID_ARGUMENT });
+
+    app.set("query parser", "extended");
+    app.set("trust proxy", true);
+    app.get("/q", (req, res) => res.json({ q: req.query, ip: req.ip }));
+    const r = await request(app.server)
+      .get("/q?a[b]=1")
+      .set("X-Forwarded-For", "203.0.113.9")
+      .expect(200);
+    assert.deepEqual(r.body, { q: { a: { b: "1" } }, ip: "203.0.113.9" });
+    assert.equal(app.get("query parser"), "extended");
+  });
+
+  test("app.all and router.all register every method; HEAD on a specific GET beats all('/*')", async () => {
+    const app = makeApp();
+    const r = Router();
+    r.all("/x", (req, res) => res.json({ m: req.method }));
+    app.use("/r", r);
+    app.get("/health", (_req, res) => res.send("ok"));
+    app.all("/*", (req, res) => res.status(404).json({ nf: req.originalUrl }));
+    for (const m of ["get", "post", "put", "patch", "delete", "options"] as const) {
+      const res = await request(app.server)[m]("/r/x").expect(200);
+      assert.equal(res.body.m, m.toUpperCase());
+    }
+    const head = await request(app.server).head("/health").expect(200);
+    assert.equal(head.headers["content-length"], "2");
+    await request(app.server).head("/nowhere").expect(404);
+    await request(app.server).post("/nowhere").expect(404, { nf: "/nowhere" });
+  });
+
+  test("zonix.json/urlencoded/raw/text/static/Router hang off the default export", () => {
+    assert.equal(typeof zonix.json, "function");
+    assert.equal(typeof zonix.urlencoded, "function");
+    assert.equal(typeof zonix.raw, "function");
+    assert.equal(typeof zonix.text, "function");
+    assert.equal(typeof zonix.static, "function");
+    assert.equal(zonix.Router, Router);
+  });
+});

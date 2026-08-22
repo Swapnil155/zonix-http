@@ -1,5 +1,6 @@
 import { ErrorCode, frameworkError } from "../errors/index.js";
 import type { Middleware } from "../types.js";
+import { ZonixRequest } from "../request.js";
 import { readBody, stripBom, toBytes } from "./read.js";
 
 export interface ParseJSONOptions {
@@ -28,17 +29,20 @@ export function parseJSON(options: ParseJSONOptions = {}): Middleware {
   const extraTypes = normalizeTypes(options.type);
 
   return function parseJSONMiddleware(req, _res, next) {
-    if (req.body !== undefined) return next();
+    if (!ZonixRequest.bodyIsOpen(req)) return next();
 
     const contentType = req.headers["content-type"];
-    if (contentType === undefined || !isJSONType(contentType, extraTypes)) return next();
+    if (contentType === undefined || !isJSONType(contentType, extraTypes)) {
+      ZonixRequest.defaultBody(req);
+      return next();
+    }
 
     // Shared listener-based reader (decision 13): byte-exact limit, pause on
     // overflow, disconnect tagging, single chunk handed back without a copy.
     readBody(req, limit, (err, buf) => {
       if (err !== undefined) return next(err);
       if (buf.byteLength === 0) {
-        req.body = {};
+        ZonixRequest.bodyParsed(req, {});
         return next();
       }
       const text = stripBom(buf.toString("utf8"));
@@ -55,7 +59,7 @@ export function parseJSON(options: ParseJSONOptions = {}): Middleware {
           ),
         );
       }
-      req.body = parsed;
+      ZonixRequest.bodyParsed(req, parsed);
       next();
     });
   };

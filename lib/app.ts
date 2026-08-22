@@ -54,6 +54,10 @@ export class Zonix {
   readonly #router = new RouteTable();
   readonly #dev: boolean;
   readonly #maxParamLength: number;
+  /** Compiled settings shared with every request (mutated in place by `set()`). */
+  readonly #settings: ZonixSettings;
+  /** Every `app.set()` value as given, for `app.get(name)`/`enabled()`. */
+  readonly #store = new Map<string, unknown>();
   #errHandler: ErrorHandler | undefined = undefined;
   #fallback: Handler | undefined = undefined;
 
@@ -100,6 +104,79 @@ export class Zonix {
       },
     );
     (this.server as unknown as Record<symbol, ZonixSettings>)[kSettings] = settings;
+    this.#settings = settings;
+    this.#store.set("trust proxy", options.trustProxy ?? false);
+    this.#store.set("etag", options.etag ?? false);
+    this.#store.set("query parser", settings.queryParser);
+    this.#store.set("subdomain offset", settings.subdomainOffset);
+    this.#store.set("x-powered-by", false);
+  }
+
+  /**
+   * Express's settings API. Four names change behaviour - `trust proxy`,
+   * `etag`, `query parser`, `subdomain offset` (the same knobs as the
+   * constructor options) - and every other name is stored as given so an
+   * app can keep its own (`app.set("views", ...)`). `x-powered-by` is
+   * accepted and ignored: zonix never sends that header.
+   */
+  set(name: string, value: unknown): this {
+    if (typeof name !== "string") {
+      throw frameworkError(
+        "app.set() requires a setting name",
+        this.set,
+        ErrorCode.INVALID_ARGUMENT,
+      );
+    }
+    switch (name) {
+      case "trust proxy":
+        this.#settings.trust = compileTrust(value as ZonixOptions["trustProxy"]);
+        break;
+      case "etag":
+        this.#settings.etag = compileEtag(value as ZonixOptions["etag"]);
+        break;
+      case "query parser":
+        if (value !== "simple" && value !== "extended") {
+          throw frameworkError(
+            `query parser must be "simple" or "extended", received ${String(value)}`,
+            this.set,
+            ErrorCode.INVALID_ARGUMENT,
+          );
+        }
+        this.#settings.queryParser = value;
+        break;
+      case "subdomain offset":
+        this.#settings.subdomainOffset = Number(value);
+        break;
+      default:
+        break;
+    }
+    this.#store.set(name, value);
+    return this;
+  }
+
+  /** @internal */
+  static readSetting(app: Zonix, name: string): unknown {
+    return app.#store.get(name);
+  }
+
+  /** `app.set(name, true)`. */
+  enable(name: string): this {
+    return this.set(name, true);
+  }
+
+  /** `app.set(name, false)`. */
+  disable(name: string): this {
+    return this.set(name, false);
+  }
+
+  /** Is the setting truthy? */
+  enabled(name: string): boolean {
+    return Boolean(this.#store.get(name));
+  }
+
+  /** Is the setting falsy? */
+  disabled(name: string): boolean {
+    return !this.#store.get(name);
   }
 
   /**
@@ -314,18 +391,30 @@ export class Zonix {
   }
 
   // --- method sugar: app.get/post/put/patch/delete/head/options -------------
-  declare get: (path: string, ...rest: [...Middleware[], Handler]) => this;
+  /** `app.get(path, ...handlers)` registers a route; `app.get(name)` reads a setting, as in Express. */
+  declare get: {
+    (path: string, ...rest: [...Middleware[], Handler]): Zonix;
+    (setting: string): unknown;
+  };
   declare post: (path: string, ...rest: [...Middleware[], Handler]) => this;
   declare put: (path: string, ...rest: [...Middleware[], Handler]) => this;
   declare patch: (path: string, ...rest: [...Middleware[], Handler]) => this;
   declare delete: (path: string, ...rest: [...Middleware[], Handler]) => this;
   declare head: (path: string, ...rest: [...Middleware[], Handler]) => this;
+  /** Register `path` for every HTTP method at once (Express's `app.all`). */
+  all(path: string, ...rest: [...Middleware[], Handler]): this {
+    for (const method of METHODS) this.route(method, path, ...rest);
+    return this;
+  }
+
   declare options: (path: string, ...rest: [...Middleware[], Handler]) => this;
 }
 
 for (const method of METHODS) {
   Object.defineProperty(Zonix.prototype, method, {
     value: function (this: Zonix, path: string, ...rest: [...Middleware[], Handler]) {
+      // Express overload: a lone string argument to `get` reads a setting.
+      if (method === "get" && rest.length === 0) return Zonix.readSetting(this, path);
       return this.route(method, path, ...rest);
     },
     writable: true,

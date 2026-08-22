@@ -1,35 +1,40 @@
 # HANDOFF
 
-**Phase:** 8 — IN PROGRESS (S24, 2026-08-22). s1: Router/mounting/error
-middleware/maxParamLength (`ed40a62`). s2: qs-oracle extended query +
-urlencoded/raw/text (this commit). **OPEN: the s2 hello gate was not
-adjudicable — host noisy (Spotify, Docker backend, Task Manager); three runs
-+0.60% / −1.06% / +4.20% with pair spreads >10%. FIRST THING NEXT SESSION:
-quiet host; `bench/.baseline-build` is already frozen at the `ed40a62` dist
-(this session's snapshot) and `dist/` is the s2 candidate — run `node
-bench/ab.mjs --scenario=hello --runs=7` directly; record; only then the
-express-port exit test.**
+**Phase:** 8 — **CLOSED** (S25, 2026-08-22). Exit test green: a real Express
+app ported by its import line alone, 41/41 wire-identical. s2 hello gate
+re-adjudicated VALID (spreads 6.7/6.8%) **PASS +0.39%**. **Next session:
+Phase 9 opens** (packaging + CI, then README, then publish 0.x).
 
-## Done this session (Phase 8 s2)
+## Carry-over (first thing at the Phase 9 open)
 
-`qs@6.15.3` + `body-parser@1.20.6` pinned exact. `lib/query/extended.ts`
-(linear qs semantics, null-proto, proto/`prototype` dropped, depth 5, sparse
-guard with qs's overflow side-channel, parameterLimit): 117-corpus
-differential + 15-vector pollution suite + 10k×3-seed fuzz green BEFORE
-wiring. `queryParser: "extended"` (Express's `arrayLimit: 1000`, depth 5).
-`lib/body/read.ts` shared listener reader; `parseJSON` refactored onto it
-(its suites unchanged); `urlencoded` (simple = `node:querystring`; extended =
-ours with body-parser's depth 32/`max(100, params)`/1000 → 400/413), `raw`,
-`text` (charset-aware, 415 for non-native charsets). 24 parser tests incl.
-equivalence ×4 and byte-exact limits ×4; 73-probe wire-diff vs Express +
-body-parser identical, deviations asserted. **848/848; echo paired +2.58%.**
-Section "Phase 8, session 2" in `bench/results.md`.
+Quiet host → `node bench/ab.mjs --scenario=hello --runs=7 --mode=gate` on
+the current `dist/` (s3 build: settings API, `all()`, HEAD-wildcard
+precedence, `#bodyDefaulted` field) vs `bench/.baseline-build` (still the
+`ed40a62` dist). Two runs this session were SPREAD-VOID (10.0%, 10.6%;
+medians −0.10%/+1.24%). Record it; that is the Phase 8 regression gate.
 
-## Next
+## Done this session (Phase 8 s3)
 
-1. Hello gate re-run on a quiet host (see above). 2. Express-port exit test
-   closes P8. 3. Phase 9 (npm). Swapnil-side: scorecard ranges in CLAUDE.md;
-   Express docs PR; Fastify discussion decision — nothing filed here.
+`ab.mjs` prints per-config values + spreads, SPREAD-VOID >10%, `--mode=gate`.
+`test/compat/express-port/app.{express,zonix}.mjs` + `express-port.test.ts`
+(43). Landed for the port: `app.set/get(name)/enable/disable/enabled/
+disabled` (trust proxy, etag, query parser, subdomain offset honoured),
+`all()`, `zonix.json/urlencoded/raw/text/static` on the default export, HEAD
+wildcard yields to specific GET, **`req.body = {}` on a skipped request**
+(body-parser semantics; defaulted flag keeps later parsers working).
+**894/894.** Section "Phase 8, session 3" in `bench/results.md`.
+
+## Phase 9 plan (from CLAUDE.md)
+
+Name decision (`zonix-http` / `zonixjs` / `@zonixtec/zonix`); exports map +
+types, `files:["dist"]`, `sideEffects:false`, engines ≥20; tsup esm+dts;
+GitHub Actions CI Node 20/22/24, coverage ≥90% lib/, bench job
+informational; publish with provenance on tags; 0.x until dogfood. README:
+quick start, compat table (incl. the deviations asserted in
+`express-port.test.ts`, `body-parser-diff.test.ts`, `mount-express.test.ts`),
+scorecard as ranges with both M1 rows, "Measured and rejected", SECURITY.md.
+Swapnil-side: scorecard ranges in CLAUDE.md; Express docs PR; Fastify
+discussion decision — nothing filed here.
 
 ## Standing measurement rules
 

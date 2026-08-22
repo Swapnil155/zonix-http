@@ -67,6 +67,27 @@ export class ZonixRequest extends IncomingMessage {
   #compat: CompatCache | undefined = undefined;
   #res: ZonixResponse | undefined = undefined;
   #baseUrl = "";
+  /** True while `body` is the `{}` a skipping parser left, so a later parser may still parse. */
+  #bodyDefaulted = false;
+
+  /** @internal A mounted parser that does not apply leaves `{}` behind, as body-parser does. */
+  static defaultBody(req: ZonixRequest): void {
+    if (req.body === undefined) {
+      req.body = {};
+      req.#bodyDefaulted = true;
+    }
+  }
+
+  /** @internal May a parser still parse this request? (`body` unset, or only defaulted.) */
+  static bodyIsOpen(req: ZonixRequest): boolean {
+    return req.body === undefined || req.#bodyDefaulted;
+  }
+
+  /** @internal Record that `body` now holds parsed content. */
+  static bodyParsed(req: ZonixRequest, body: unknown): void {
+    req.body = body;
+    req.#bodyDefaulted = false;
+  }
 
   /**
    * @internal Mounting: swap `url` (and so `path`) for the duration of a

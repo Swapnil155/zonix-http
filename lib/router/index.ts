@@ -182,6 +182,22 @@ export class RouteTable {
         ? this.find("GET", path, maxParamLength)
         : undefined;
     }
+    // A HEAD table that only matched through a tail wildcard (`app.all("/*")`)
+    // yields to a more specific GET route, as Express's registration order
+    // would - the catch-all is registered last there.
+    if (
+      method === "HEAD" &&
+      route.paramNames[route.paramNames.length - 1] === "*" &&
+      tree !== this.#methods.get("GET")
+    ) {
+      const viaGet = this.find("GET", path, maxParamLength);
+      if (
+        viaGet !== undefined &&
+        viaGet.route.paramNames[viaGet.route.paramNames.length - 1] !== "*"
+      ) {
+        return viaGet;
+      }
+    }
 
     // maxParamLength: a bound on every named capture (wildcards are tails, not
     // identifiers, and are exempt). Checked on the decoded value, which is what
