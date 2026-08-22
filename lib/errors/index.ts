@@ -42,6 +42,8 @@ export const ErrorCode = {
   NOT_ACCEPTABLE: "ERR_ZONIX_NOT_ACCEPTABLE",
   PRECONDITION_FAILED: "ERR_ZONIX_PRECONDITION_FAILED",
   RANGE_NOT_SATISFIABLE: "ERR_ZONIX_RANGE_NOT_SATISFIABLE",
+  /** A decoded path parameter is longer than `maxParamLength` (HTTP 414). */
+  URI_TOO_LONG: "ERR_ZONIX_URI_TOO_LONG",
 } as const;
 
 export type ErrorCodeValue = (typeof ErrorCode)[keyof typeof ErrorCode];

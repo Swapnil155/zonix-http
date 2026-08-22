@@ -8,6 +8,7 @@
 export { Zonix, default } from "./app.js";
 
 export { ZonixRequest } from "./request.js";
+export { Router, type RouterFactory } from "./router/mount.js";
 export { ZonixResponse } from "./response.js";
 
 export { parseJSON, type ParseJSONOptions } from "./body/json.js";
@@ -20,6 +21,7 @@ export { ErrorCode, frameworkError, isClientDisconnect, type ZonixError } from "
 
 export type {
   ErrorHandler,
+  ErrorMiddleware,
   Handler,
   HandlerResult,
   HttpMethod,

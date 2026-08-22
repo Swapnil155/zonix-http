@@ -34,7 +34,14 @@ export interface AppSettings {
   cookieSecret?: string | undefined;
   /** Body tag generator; undefined = ETags off (the default). */
   etag?: ((body: Buffer) => string | undefined) | undefined;
+  /** Longest decoded path parameter accepted; 414 above. */
+  maxParamLength: number;
+  /** Warn on misuse (double `next()`). */
+  dev: boolean;
 }
+
+/** Fastify's default, and a sane bound for any identifier-shaped segment. */
+export const DEFAULT_MAX_PARAM_LENGTH = 100;
 
 /** Settings for a request that cannot reach its app (detached socket, unit test). */
 export const DEFAULT_SETTINGS: AppSettings = Object.freeze({
@@ -42,6 +49,8 @@ export const DEFAULT_SETTINGS: AppSettings = Object.freeze({
   subdomainOffset: 2,
   cookieSecret: undefined,
   etag: undefined,
+  maxParamLength: DEFAULT_MAX_PARAM_LENGTH,
+  dev: false,
 });
 
 /**

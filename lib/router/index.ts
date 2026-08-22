@@ -1,5 +1,5 @@
 import { ErrorCode, frameworkError } from "../errors/index.js";
-import { EMPTY } from "../internal/constants.js";
+import { DEFAULT_MAX_PARAM_LENGTH, EMPTY } from "../internal/constants.js";
 import type { Handler, Middleware, StringMap } from "../types.js";
 import { Node, walk, walkPath, zip, type MethodTree, type Route } from "./radix.js";
 import { decodeSegment, normalize, splitPath } from "./normalize.js";
@@ -21,7 +21,7 @@ export interface RouteMatch {
  * on the matched leaf, so `/:id/profile` and `/:username/settings` can legally
  * share a param slot.
  */
-export class Router {
+export class RouteTable {
   readonly #methods = new Map<string, MethodTree>();
 
   /**
@@ -136,7 +136,11 @@ export class Router {
    *
    * @throws a 400-tagged framework error when a segment cannot be percent-decoded.
    */
-  find(method: string, path: string): RouteMatch | undefined {
+  find(
+    method: string,
+    path: string,
+    maxParamLength: number = DEFAULT_MAX_PARAM_LENGTH,
+  ): RouteMatch | undefined {
     // Direct hit first: `req.method` is already uppercase for every well-formed
     // request. The fallback keeps matching case-insensitive for anything odd.
     let tree = this.#methods.get(method);
@@ -145,7 +149,9 @@ export class Router {
       if (tree === undefined) {
         // HEAD is answered by the GET route when no HEAD route exists, as
         // Express and Fastify do; node:http drops the body on the wire.
-        if (method === "HEAD" || method.toUpperCase() === "HEAD") return this.find("GET", path);
+        if (method === "HEAD" || method.toUpperCase() === "HEAD") {
+          return this.find("GET", path, maxParamLength);
+        }
         return undefined;
       }
     }
@@ -173,10 +179,27 @@ export class Router {
     }
     if (route === undefined) {
       return method === "HEAD" && tree !== this.#methods.get("GET")
-        ? this.find("GET", path)
+        ? this.find("GET", path, maxParamLength)
         : undefined;
+    }
+
+    // maxParamLength: a bound on every named capture (wildcards are tails, not
+    // identifiers, and are exempt). Checked on the decoded value, which is what
+    // the handler would see; a breach is a 414 before any handler runs.
+    for (let i = 0; i < captured.length; i++) {
+      if ((captured[i] as string).length > maxParamLength && route.paramNames[i] !== "*") {
+        throw frameworkError(
+          `Path parameter ":${route.paramNames[i]}" exceeds maxParamLength (${maxParamLength})`,
+          this.find,
+          ErrorCode.URI_TOO_LONG,
+          414,
+        );
+      }
     }
 
     return { params: zip(route.paramNames, captured), route };
   }
 }
+
+/** Back-compat alias for the in-process microbench. */
+export { RouteTable as Router };

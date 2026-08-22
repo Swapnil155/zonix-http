@@ -1,29 +1,32 @@
 # HANDOFF
 
-**Phase:** 7 — CLOSED on the M1 verdict (S22, 2026-08-22, container). Next
-session: **Phase 8 opens** (Router class, path-mounted `use`, nesting,
-`originalUrl`/`baseUrl`, 4-arity error middleware, urlencoded/raw/text parsers,
-extended query parser + pollution/fuzz suites; exit = real Express app ported
-by changing only the import line).
+**Phase:** 8 — IN PROGRESS (S23, 2026-08-22). Phase 7 CLOSED (M1 MET,
+`cbf9d42`). s1 done: Router class + mounting + 4-arity error middleware +
+maxParamLength. Next: parsers (`urlencoded`/`raw`/`text`), extended query
+parser + pollution/fuzz suites; then the express-port exit test closes P8.
 
-## Done this session (M1 adjudication, container, two rows)
+## Done this session (Phase 8 s1)
 
-Prereq: `ZONIX_STATIC_CACHE=1` knob in `bench/servers/zonix.js` (serveStatic
-cache over mirrored fixtures, fixed mtime); `bench/smoke-cache.mjs` 32/32
-wire-identical cache-on cold+warm vs default (host + container); matrix/smoke
-take `zonix-cache` as a framework id. Regime clean pre+post, spreads ≤4%,
-Fastify unimodal. **file-1kb: default 11,337 → 1.60× Express / 1.28× Fastify /
-1.68× cpeak; cache-on 28,603 → 4.03× / 3.24× / 4.25× (2.52× own default) —
-≥2× MET on the cache row, labeled opt-in.** file-1mb informational (cache
-1.21× own default). Default-row ratios ~10% under the post-audit matrix —
-scorecard should quote ranges (D2). Section "M1 adjudication 2026-08-22" in
-`bench/results.md`.
+`lib/router/mount.ts`: `Router()` (with/without `new`, `zonix.Router`),
+`use(path?, fn|router|4-arity)`, static segment-aligned prefixes, url rewrite
+
+- `baseUrl`/`originalUrl` (restored on `next()`), router-level then app-level
+  error middleware before `handleErr`, `registerRoute` shared. Radix class →
+  `RouteTable` (alias kept for micro.ts). `maxParamLength` (default 100,
+  decoded length, `*` exempt, `Infinity` off) → 414 `URI_TOO_LONG` in `find`.
+  Hot path: `#globals` prefix unchanged; `#stack` (registration order) only
+  once something is mounted. Deviation to document: every `use()` runs before
+  routes. **626/626; Express wire-diff 23/23 on a two-router app; hello gate
+  86,995 → 87,034, median −0.13%, range −2.5..+3.4% PASS.** Section "Phase 8,
+  session 1" in `bench/results.md`.
 
 ## Next
 
-Phase 8 as above (test-first, Express wire-diff), then Phase 9 (npm; README
-scorecard as ranges with both M1 rows). Swapnil-side: scorecard ranges in
-CLAUDE.md; Express docs PR; Fastify discussion decision — nothing filed here.
+Parsers + extended query (depth ≤5, key caps, proto keys dropped,
+null-proto; pollution + fuzz suites, qs as rule-8 oracle), then the
+express-port exit test (real Express example app, import line only).
+Swapnil-side: scorecard ranges in CLAUDE.md; Express docs PR; Fastify
+discussion decision — nothing filed here.
 
 ## Standing measurement rules
 

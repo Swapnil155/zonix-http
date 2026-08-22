@@ -62,6 +62,18 @@ export class ZonixRequest extends IncomingMessage {
   #path: string | undefined = undefined;
   #compat: CompatCache | undefined = undefined;
   #res: ZonixResponse | undefined = undefined;
+  #baseUrl = "";
+
+  /**
+   * @internal Mounting: swap `url` (and so `path`) for the duration of a
+   * mounted layer and set the mount prefix. The query cache is kept - the
+   * query string is the same either way. Not public API.
+   */
+  static rewrite(req: ZonixRequest, url: string, baseUrl: string): void {
+    req.url = url;
+    req.#path = undefined;
+    req.#baseUrl = baseUrl;
+  }
 
   /**
    * Link the response this request will be answered with. One pointer store
@@ -109,25 +121,17 @@ export class ZonixRequest extends IncomingMessage {
   }
 
   /**
-   * The URL as it arrived.
-   *
-   * Captured on first read. Today nothing rewrites `req.url`, so this equals
-   * `url`; when router mounting lands it must be captured before the prefix is
-   * stripped, and that is the mount code's job.
+   * The URL as it arrived, before any mount stripped its prefix. Captured on
+   * first read; the mount code reads it before the first rewrite.
    */
   get originalUrl(): string {
     const cache = (this.#compat ??= {});
     return (cache.originalUrl ??= this.url ?? "");
   }
 
-  /**
-   * The mount prefix this request was matched under.
-   *
-   * Always `""` until router mounting exists — which is what Express reports
-   * for an un-mounted app, so this is correct rather than a placeholder.
-   */
+  /** The mount prefix the current layer was mounted under (`""` at the top level). */
   get baseUrl(): string {
-    return "";
+    return this.#baseUrl;
   }
 
   /** `"https"` when the connection is TLS, or when a trusted proxy says so. */

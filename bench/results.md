@@ -2014,3 +2014,84 @@ tmp /tmp, exe /usr/local/bin/node, cpus=8.
   1.68–1.84×) per D2, not either session alone. No ≥2× move anywhere (rule 6
   not triggered).
 - Phase 7 closes on this verdict.
+
+---
+
+# Phase 8, session 1 (2026-08-22) — Router class, mounting, error middleware, maxParamLength
+
+_Scope: `zonix.Router()`, path-mounted `use`, nesting, url rewrite with
+`originalUrl`/`baseUrl`, four-arity error middleware before `handleErr`,
+`maxParamLength` → 414. Express wire-diff on a two-router example app._
+
+## 1. As built
+
+- `lib/router/mount.ts` (new): `MountableRouter` (own `RouteTable`, ordered
+  `use()` stack, own error middleware; `handle` bound once so the same router
+  mounts twice), `Router` factory callable with or without `new`
+  (`instanceof` holds both ways; `zonix.Router === Router`), `parseUse`
+  (`use(path?, ...fns)`; mount path = static, segment-aligned prefix — `:` and
+  `*` rejected; `/` → `""`), `mountLayer` (prefix check on `req.path`, then
+  `req.url` loses the prefix / `req.baseUrl` gains it for the layer's
+  duration, restored on `next()`; `originalUrl` captured before the first
+  rewrite; `"/api?x=1"` → `"/?x=1"` as Express does), `scopeErrorLayer`,
+  `runErrorLayers` (`next(err)` passes a new error on, `next()` passes the
+  same one on, a throw/rejection inside a layer becomes the next layer's
+  error), `registerRoute` (validation shared by app and router). The radix
+  class is now `RouteTable` (alias `Router` kept for `bench/micro.ts`).
+- `lib/app.ts`: `use()` overloads (plain / prefixed / error / router);
+  `#globals` stays the hot-path chain prefix; once anything is mounted the
+  full `#stack` (plain + wrapped, registration order) is the prefix instead,
+  so `app.use("/admin", auth)` guards `app.get("/admin/secret")` exactly
+  where it was registered. Error layers run in `#fail` before `dispatchError`
+  (so before `handleErr`). `maxParamLength` option → settings (`dev` too, so
+  routers read both via `settingsOf`).
+- `lib/router/index.ts`: `find(method, path, maxParamLength = 100)` throws a
+  414 (`ErrorCode.URI_TOO_LONG`) when any named capture's **decoded** length
+  exceeds the bound; `*` tails exempt; `Infinity` disables. Guard runs after
+  the match, before any handler; cost on the hot path is one loop over
+  captures that is empty for static routes.
+- `lib/request.ts`: `#baseUrl` field, `baseUrl` getter, `@internal
+ZonixRequest.rewrite(req, url, baseUrl)` (resets the cached path; keeps the
+  query cache — same query string either way).
+- Documented deviation (compat table): every `use()` runs before any route,
+  in registration order — Express applies a `use()` only to routes
+  registered after it. Mount paths are static prefixes (no `:param` mounts).
+
+## 2. Tests
+
+- `test/core/mount.test.ts` (31): construction/validation; an 8-case
+  mount/nest matrix echoing `url/path/baseUrl/originalUrl/params/query` from
+  every layer depth; POST under a nested router; segment-aligned prefix
+  misses (`/apix`, `/api2/users`, `/api/usersx`); mounted miss → later app
+  route → 404; url/baseUrl restored after `next()`; prefixed plain middleware
+  guarding routes with order preserved; router-level `use` order; same router
+  mounted twice; params per layer; 400 on bad encoding under a mount; HEAD →
+  GET fallback through two mount levels with explicit HEAD winning; error
+  middleware ordering (first → rewrap → same-error pass-on → handleErr),
+  answering layer stops the chain, throwing/rejecting layers, 422 status
+  honoured, router-level before app-level before `handleErr`, path-scoped
+  error layers, after-headers errors still reach layers; `maxParamLength`
+  boundaries (100 ok / 101 → 414 before the handler; decoded length —
+  `%C3%A9` counts as one; configurable 5; wildcard exempt; `Infinity`;
+  applies inside mounted routers and routes to error middleware as
+  `URI_TOO_LONG`; static segments unaffected).
+- `test/compat/mount-express.test.ts` (23): one `build(app, Router)` on zonix
+  and on Express 4.22.2 (nested `api` → `users`/`admin`, prefixed plain
+  middleware, router-level error middleware at two levels, custom 404,
+  `x-api`/`x-mounted-url` headers echoing `baseUrl`/rewritten `url`).
+  **23-request corpus wire-identical**: status, Content-Type, Content-Length,
+  the two echo headers, and JSON bodies carrying `url/path/baseUrl/
+originalUrl/params/query/method` — including `/api`, `/api/`, query strings
+  under mounts, `/apix`, `/api2/users`, HEAD through mounts, 414-free
+  encoded params, and errors caught by the users router vs the api router.
+
+## 3. Gates
+
+- Full suite **626/626** (572 at session start); all oracle suites green.
+- **Paired hello A/B** (baseline = `cbf9d42` dist frozen before the build, 7
+  pairs): 86,995 → 87,034, **median of paired deltas −0.13%, range
+  −2.5..+3.4% — ≤2% PASS.** The fast path gained one boolean read
+  (`#mounted`) and `find` one empty-loop check.
+
+Next: `urlencoded`/`raw`/`text` parsers, extended query parser with
+pollution + fuzz suites; then the express-port exit test closes Phase 8.

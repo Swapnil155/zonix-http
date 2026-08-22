@@ -2,15 +2,26 @@ import http from "node:http";
 import type { AddressInfo, ListenOptions } from "node:net";
 import { ErrorCode, frameworkError } from "./errors/index.js";
 import { compileTrust } from "./http/proxy.js";
-import { kSettings } from "./internal/constants.js";
+import { DEFAULT_MAX_PARAM_LENGTH, kSettings } from "./internal/constants.js";
 import { dispatchError } from "./internal/dispatch-error.js";
 import { isThenable, runChain } from "./internal/run-chain.js";
 import { ZonixRequest } from "./request.js";
 import { compileEtag } from "./http/etag.js";
 import { ZonixResponse } from "./response.js";
-import { Router, type Route, type RouteMatch } from "./router/index.js";
+import { RouteTable, type Route, type RouteMatch } from "./router/index.js";
+import {
+  MountableRouter,
+  Router,
+  isErrorMiddleware,
+  mountLayer,
+  parseUse,
+  registerRoute,
+  runErrorLayers,
+  scopeErrorLayer,
+} from "./router/mount.js";
 import type {
   ErrorHandler,
+  ErrorMiddleware,
   Handler,
   HttpMethod,
   Middleware,
@@ -25,13 +36,24 @@ export class Zonix {
   /** Escape hatch to the underlying `http.Server`. */
   readonly server: http.Server<typeof ZonixRequest, typeof ZonixResponse>;
 
+  /** Plain global middleware, in order - the hot path's chain prefix. */
   readonly #globals: Middleware[] = [];
+  /**
+   * Every `use()` entry in registration order, prefixed ones wrapped. Used as
+   * the chain prefix instead of `#globals` once anything is mounted, so the
+   * Express ordering between plain and mounted middleware is preserved.
+   */
+  readonly #stack: Middleware[] = [];
+  #mounted = false;
+  /** Four-arity error middleware, run before `handleErr`. */
+  readonly #errors: ErrorMiddleware[] = [];
   /** Bumped whenever the global chain or the fallback changes, invalidating cached pipelines. */
   #globalsVersion = 0;
   #missPipeline: Middleware[] | undefined = undefined;
   #missPipelineVersion = -1;
-  readonly #router = new Router();
+  readonly #router = new RouteTable();
   readonly #dev: boolean;
+  readonly #maxParamLength: number;
   #errHandler: ErrorHandler | undefined = undefined;
   #fallback: Handler | undefined = undefined;
 
@@ -40,11 +62,22 @@ export class Zonix {
     // Compiled once here, read by request accessors through `req.socket.server`.
     // Nothing is attached per request, so a request that never asks for req.ip
     // pays nothing for the setting existing.
+    const maxParamLength = options.maxParamLength ?? DEFAULT_MAX_PARAM_LENGTH;
+    if (typeof maxParamLength !== "number" || Number.isNaN(maxParamLength) || maxParamLength < 0) {
+      throw frameworkError(
+        `maxParamLength must be a non-negative number, received ${String(maxParamLength)}`,
+        zonix,
+        ErrorCode.INVALID_ARGUMENT,
+      );
+    }
+    this.#maxParamLength = maxParamLength;
     const settings: ZonixSettings = {
       trust: compileTrust(options.trustProxy),
       subdomainOffset: options.subdomainOffset ?? 2,
       cookieSecret: options.cookieSecret,
       etag: compileEtag(options.etag),
+      maxParamLength,
+      dev: this.#dev,
     };
     this.server = http.createServer(
       { IncomingMessage: ZonixRequest, ServerResponse: ZonixResponse },
@@ -61,64 +94,49 @@ export class Zonix {
     (this.server as unknown as Record<symbol, ZonixSettings>)[kSettings] = settings;
   }
 
-  /** Register global middleware. Runs in registration order for every request. */
-  use(...middleware: Middleware[]): this {
-    if (middleware.length === 0) {
-      throw frameworkError(
-        "app.use() requires at least one middleware",
-        this.use,
-        ErrorCode.INVALID_ARGUMENT,
-      );
-    }
-    for (const mw of middleware) {
-      if (typeof mw !== "function") {
-        throw frameworkError(
-          `app.use() expects functions, received ${typeof mw}`,
-          this.use,
-          ErrorCode.INVALID_ARGUMENT,
-        );
+  /**
+   * Register middleware: `use(fn)`, `use(path, fn)`, `use(path, router)`, or
+   * four-arity `use((err, req, res, next) => ...)` error middleware.
+   *
+   * Everything registered here runs before any route, in registration order
+   * (a deliberate, documented difference from Express, where a `use()` after
+   * a route does not apply to it). A mount path is a static segment-aligned
+   * prefix; under it `req.url`/`req.path` lose the prefix and `req.baseUrl`
+   * gains it, restored when the layer calls `next()`. Error middleware runs
+   * before `handleErr`.
+   */
+  use(...middleware: Middleware[]): this;
+  use(path: string, ...middleware: Middleware[]): this;
+  use(...middleware: ErrorMiddleware[]): this;
+  use(path: string, ...middleware: ErrorMiddleware[]): this;
+  use(...routers: MountableRouter[]): this;
+  use(path: string, ...routers: MountableRouter[]): this;
+  use(...args: unknown[]): this {
+    const { prefix, fns } = parseUse(args, this.use, "app.use()");
+    for (const fn of fns) {
+      if (fn instanceof MountableRouter) {
+        this.#mount(mountLayer(prefix, fn.handle));
+      } else if (isErrorMiddleware(fn)) {
+        this.#errors.push(scopeErrorLayer(prefix, fn));
+      } else if (prefix.length === 0) {
+        this.#globals.push(fn as Middleware);
+        this.#stack.push(fn as Middleware);
+      } else {
+        this.#mount(mountLayer(prefix, fn as Middleware));
       }
-      this.#globals.push(mw);
     }
     this.#globalsVersion++;
     return this;
   }
 
+  #mount(layer: Middleware): void {
+    this.#mounted = true;
+    this.#stack.push(layer);
+  }
+
   /** Register a route. Middleware passed before the handler runs only for this route. */
   route(method: string, path: string, ...rest: [...Middleware[], Handler]): this {
-    if (typeof method !== "string" || method.length === 0) {
-      throw frameworkError(
-        "app.route() requires an HTTP method string",
-        this.route,
-        ErrorCode.INVALID_ARGUMENT,
-      );
-    }
-    if (typeof path !== "string" || !path.startsWith("/")) {
-      throw frameworkError(
-        `Route path must start with "/", received ${JSON.stringify(path)}`,
-        this.route,
-        ErrorCode.INVALID_ROUTE,
-      );
-    }
-    const handler = rest[rest.length - 1];
-    if (typeof handler !== "function") {
-      throw frameworkError(
-        `app.route("${method}", "${path}") needs a handler function as its last argument`,
-        this.route,
-        ErrorCode.INVALID_ARGUMENT,
-      );
-    }
-    const middleware = rest.slice(0, -1) as Middleware[];
-    for (const mw of middleware) {
-      if (typeof mw !== "function") {
-        throw frameworkError(
-          `Route middleware must be functions, received ${typeof mw}`,
-          this.route,
-          ErrorCode.INVALID_ARGUMENT,
-        );
-      }
-    }
-    this.#router.add(method, path, middleware, handler as Handler);
+    registerRoute(this.#router, method, path, rest, this.route, "app.route()");
     return this;
   }
 
@@ -185,7 +203,7 @@ export class Zonix {
   #handle(req: ZonixRequest, res: ZonixResponse): void {
     let match;
     try {
-      match = this.#router.find(req.method ?? "GET", req.path);
+      match = this.#router.find(req.method ?? "GET", req.path, this.#maxParamLength);
     } catch (err) {
       this.#fail(err, req, res);
       return;
@@ -193,7 +211,12 @@ export class Zonix {
 
     // Fast path: a matched route with nothing to run but its own handler. Skips
     // the chain array, the chain promise and the per-step closures entirely.
-    if (match !== undefined && this.#globals.length === 0 && match.route.middleware.length === 0) {
+    if (
+      match !== undefined &&
+      this.#globals.length === 0 &&
+      !this.#mounted &&
+      match.route.middleware.length === 0
+    ) {
       req.params = match.params;
       try {
         const result = match.route.handler(req, res, (err) => {
@@ -236,7 +259,8 @@ export class Zonix {
     const cached = route.pipeline;
     if (cached !== undefined && route.pipelineVersion === this.#globalsVersion) return cached;
 
-    const chain: Middleware[] = [...this.#globals, ...route.middleware, route.handler];
+    const base = this.#mounted ? this.#stack : this.#globals;
+    const chain: Middleware[] = [...base, ...route.middleware, route.handler];
     route.pipeline = chain;
     route.pipelineVersion = this.#globalsVersion;
     return chain;
@@ -252,7 +276,8 @@ export class Zonix {
       ((r, s) => {
         this.#notFound(r, s);
       });
-    const chain: Middleware[] = [...this.#globals, terminal];
+    const base = this.#mounted ? this.#stack : this.#globals;
+    const chain: Middleware[] = [...base, terminal];
     this.#missPipeline = chain;
     this.#missPipelineVersion = this.#globalsVersion;
     return chain;
@@ -260,6 +285,16 @@ export class Zonix {
 
   /** Hand an error to central dispatch from a non-async context. */
   #fail(err: unknown, req: ZonixRequest, res: ZonixResponse): void {
+    if (this.#errors.length !== 0) {
+      runErrorLayers(this.#errors, err, req, res, (remaining) =>
+        this.#dispatch(remaining, req, res),
+      );
+      return;
+    }
+    this.#dispatch(err, req, res);
+  }
+
+  #dispatch(err: unknown, req: ZonixRequest, res: ZonixResponse): void {
     dispatchError(err, req, res, this.#errHandler).catch((internal: unknown) => {
       // dispatchError is written not to reject; this only fires if zonix broke.
       console.error("zonix: internal failure while dispatching an error", internal);
@@ -291,7 +326,8 @@ for (const method of METHODS) {
   });
 }
 
-/** Create an application. */
+/** Create an application. `zonix.Router()` creates a mountable router. */
 export default function zonix(options?: ZonixOptions): Zonix {
   return new Zonix(options);
 }
+zonix.Router = Router;

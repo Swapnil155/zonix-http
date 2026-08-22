@@ -34,6 +34,17 @@ export type ErrorHandler = (
   res: ZonixResponse,
 ) => HandlerResult;
 
+/**
+ * Four-argument error middleware, registered with `use()`. Runs before the
+ * central `handleErr`; `next(err)` passes on, `next()` passes the same error on.
+ */
+export type ErrorMiddleware = (
+  err: ZonixError,
+  req: ZonixRequest,
+  res: ZonixResponse,
+  next: Next,
+) => HandlerResult;
+
 export type HttpMethod = "get" | "post" | "put" | "patch" | "delete" | "head" | "options";
 
 export interface ZonixOptions {
@@ -70,6 +81,12 @@ export interface ZonixOptions {
    * `etag()` middleware instead.
    */
   etag?: EtagOption;
+  /**
+   * Longest decoded path parameter accepted; a longer one is answered 414
+   * before any handler runs. Defaults to 100 (Fastify's default). `Infinity`
+   * disables the guard.
+   */
+  maxParamLength?: number;
 }
 
 export type EtagGenerator = (body: Buffer) => string | undefined;
@@ -88,4 +105,8 @@ export interface ZonixSettings {
   cookieSecret?: string | undefined;
   /** Body tag generator, or undefined when ETags are off. */
   etag?: EtagGenerator | undefined;
+  /** Longest decoded path parameter accepted (414 above). */
+  maxParamLength: number;
+  /** Warn on misuse (double `next()`). */
+  dev: boolean;
 }
