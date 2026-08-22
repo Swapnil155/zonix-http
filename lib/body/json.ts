@@ -45,36 +45,61 @@ export function parseJSON(options: ParseJSONOptions = {}): Middleware {
       return next(tooLarge(declared, limit));
     }
 
-    void (async () => {
-      const chunks: Buffer[] = [];
-      let size = 0;
+    // Plain event listeners, not `for await`: the async iterator costs a
+    // promise per chunk, an end-of-stream watcher and async_hooks binding on
+    // every request (ECHO-1 profile: ~8% of self time, plus GC). Listeners
+    // read the same bytes with none of that. Every guard below is unchanged:
+    // bytes are counted per chunk against the limit, a stream error or a
+    // client that goes away mid-body reaches dispatch, and a chunk arriving
+    // after the limit is never buffered.
+    const chunks: Buffer[] = [];
+    let size = 0;
+    let done = false;
 
-      try {
-        for await (const chunk of req) {
-          const buffer = chunk as Buffer;
-          size += buffer.byteLength; // bytes, not characters
-          if (size > limit) {
-            // Throwing out of for-await destroys the stream, so we stop reading.
-            throw tooLarge(size, limit);
-          }
-          chunks.push(buffer);
-        }
-      } catch (err) {
-        next(err);
+    const finish = (err?: unknown): void => {
+      if (done) return;
+      done = true;
+      req.removeListener("data", onData);
+      req.removeListener("end", onEnd);
+      req.removeListener("error", onError);
+      req.removeListener("close", onClose);
+      next(err);
+    };
+
+    const onData = (chunk: Buffer): void => {
+      size += chunk.byteLength; // bytes, not characters
+      if (size > limit) {
+        // Stop consuming; the 413 goes out with `Connection: close` from
+        // dispatch and the socket closes behind it, so the rest of the body is
+        // never read into memory.
+        req.pause();
+        finish(tooLarge(size, limit));
         return;
       }
+      chunks.push(chunk);
+    };
 
+    const onEnd = (): void => {
+      if (done) return;
       if (size === 0) {
         req.body = {};
-        next();
+        finish();
         return;
       }
 
-      const text = Buffer.concat(chunks, size).toString("utf8").replace(/^﻿/, "");
+      // One chunk is the common case for any body under the socket's high-water
+      // mark, and a single chunk needs no concat copy.
+      let text =
+        chunks.length === 1
+          ? (chunks[0] as Buffer).toString("utf8")
+          : Buffer.concat(chunks, size).toString("utf8");
+      if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
+
+      let parsed: unknown;
       try {
-        req.body = JSON.parse(text);
+        parsed = JSON.parse(text);
       } catch (err) {
-        next(
+        finish(
           frameworkError(
             `Invalid JSON body: ${(err as Error).message}`,
             parseJSONMiddleware,
@@ -84,8 +109,25 @@ export function parseJSON(options: ParseJSONOptions = {}): Middleware {
         );
         return;
       }
-      next();
-    })();
+      req.body = parsed;
+      finish();
+    };
+
+    const onError = (err: unknown): void => finish(err);
+
+    // `close` without `end`: the client went away mid-body. The same error the
+    // async iterator produced, so disconnect tagging in dispatch is unchanged.
+    const onClose = (): void => {
+      if (done || req.readableEnded) return;
+      const err = new Error("Premature close") as Error & { code: string };
+      err.code = "ERR_STREAM_PREMATURE_CLOSE";
+      finish(err);
+    };
+
+    req.on("data", onData);
+    req.once("end", onEnd);
+    req.once("error", onError);
+    req.once("close", onClose);
   };
 }
 

@@ -48,7 +48,7 @@ const SCENARIOS = {
   },
 };
 
-const FRAMEWORKS = new Set(["zonix", "express", "fastify", "fastify-schema"]);
+const FRAMEWORKS = new Set(["zonix", "express", "fastify", "fastify-schema", "cpeak"]);
 
 const args = new Map(
   process.argv.slice(2).map((a) => {

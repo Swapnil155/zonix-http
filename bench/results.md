@@ -1396,3 +1396,123 @@ W2 is untouched.
   session): hello 0.94× vs 0.93×, routes-200 1.37× vs 1.35×, chain 0.91× vs
   0.90×, file-1kb 1.43× vs 1.46× — unchanged within noise, as the audit's own
   sub-noise measurements predicted.**
+
+---
+
+# ECHO-1 2026-08-22 — closing the cpeak echo gap, legally
+
+_Per the Session 16 spec. Baseline for every paired A/B: the build frozen
+before this session's edits (`bench/snapshot.mjs`, `65f2d8e` + the params
+change — nothing on the echo path). Container record: `zonix-bench`, `--cpus=8`,
+regime clean pre (298k @ 8.4×) and post (271k @ 13.3×), no flip, smoke OK._
+
+## 1. Flamegraph (zonix, post-json-echo, in-container, before the change)
+
+42,399 rps under the profiler. Top self-time, zonix's own frames 7.7%:
+
+```
+39.19 writev · 9.59 (garbage collector) · 4.24 (anonymous) @ index.js:2508 [parseJSON closure]
+4.08 bind @ async_hooks · 2.56 writevGeneric · 1.60 res.json · 1.52 runMicrotasks
+1.51 createAsyncIterator @ readable · 0.98 eos @ end-of-stream · 0.85 processTicksAndRejections
+0.78 FastBuffer · 0.55 bound @ async_hooks · 0.54 nextTick · 0.46 bind @ async_hooks
+```
+
+The signature is the **`for await (const chunk of req)`** loop: an async
+iterator (`createAsyncIterator`), its end-of-stream watcher (`eos`), an
+`AsyncResource` binding per request (`async_hooks bind/bound`), a promise and a
+microtask per chunk (`runMicrotasks`, `processTicksAndRejections`, `nextTick`),
+and the GC share those allocations drive (9.6% vs 2.6% on hello). Roughly 8–10%
+of self time plus GC — on a path where zonix's entire framework cost should be
+~3%.
+
+## 2. cpeak@2.9.2 `parseJSON` — what its speed depends on
+
+| technique                | cpeak                                                                                     | zonix (before)                                                                                                                                                 | expected effect                                                                                 |
+| ------------------------ | ----------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| Body read                | `req.on("data")` / `req.on("end")` listeners — no promises, no iterator, no async_hooks   | `for await` async iterator                                                                                                                                     | **large**: removes the iterator, `eos`, microtask-per-chunk and the AsyncResource bind; cuts GC |
+| Single-chunk path        | `chunks.length === 1 ? chunks[0].toString() : Buffer.concat(...)`                         | always `Buffer.concat(chunks, size)`                                                                                                                           | small: one copy avoided for every body under the socket high-water mark (every bench body)      |
+| BOM handling             | none                                                                                      | `.replace(/^﻿/, "")` regex on the text                                                                                                                         | tiny; regex → `charCodeAt(0)` check                                                             |
+| Content-Length pre-check | none                                                                                      | rejects oversized declared length before reading                                                                                                               | none on the hot path (one header read)                                                          |
+| Byte limit               | **enforced** — per-chunk `bytesReceived > limit` → 413, `req.pause()` + listeners removed | enforced — byte-exact, throws out of `for await`                                                                                                               | —                                                                                               |
+| Content-type gate        | **present**, prefix match (`startsWith("application/json")` or `includes("+json")`)       | parameter-stripped, case-insensitive exact match + `+json` + extra types                                                                                       | —                                                                                               |
+| Charset                  | **none** — always `utf-8`, no BOM strip                                                   | BOM stripped; utf-8                                                                                                                                            | —                                                                                               |
+| Overflow wire behaviour  | 413 delivered, unread body left on the socket                                             | `for await` throw **destroyed the request** — a mid-stream overflow without Content-Length produced a connection reset, not a 413 (latent defect, fixed below) | —                                                                                               |
+| Response                 | `setHeader` + `end(string)`                                                               | `writeHead` batch + `end(Buffer)` (D3)                                                                                                                         | zonix ahead                                                                                     |
+
+**Verdict on the guards: cpeak's speed does not come from skipped guards.** Its
+limit and gate are real; what it lacks (BOM/charset) costs nothing measurable.
+The mechanism is the listener-based read. Every zonix guard is retained.
+
+## 3. Implemented (one change, `lib/body/json.ts`)
+
+The read loop is now `data`/`end`/`error`/`close` listeners: bytes counted per
+chunk against the byte-exact limit, single chunk decoded without `concat`,
+BOM stripped by a char-code check, a stream error or a client that goes away
+mid-body reaching dispatch exactly as before (disconnect tagging unchanged),
+and a chunk arriving after the limit never buffered. Behavioural change,
+deliberate and tested: a body that **overflows mid-stream now receives a 413
+with `Connection: close`** instead of a socket reset.
+
+Guards (`test/body/json-equivalence.test.ts`, rule 3): single write vs
+dribbled bytes (split inside a multi-byte character) vs chunked encoding →
+byte-identical responses; BOM whole vs split across chunks; chunked body
+exactly at the limit → 200, one byte over → 413 received by the client with
+`Connection: close`; dribbled Content-Length body overflowing mid-stream →
+413, not a reset; client disconnect mid-body → `handleErr` sees
+`clientDisconnect: true` (ECONNRESET or PREMATURE_CLOSE), tripwire clean.
+Existing `json.test.ts` byte-exact boundaries untouched. **468/468.**
+
+## 4. Adjudication
+
+**Paired e2e, host, 7 pairs (baseline vs candidate, alternating):**
+
+| scenario                         | baseline | candidate | median of paired deltas | range                  | gate/verdict                      |
+| -------------------------------- | -------: | --------: | ----------------------: | ---------------------- | --------------------------------- |
+| **post-json-echo**               |   47,626 |    67,306 |             **+40.90%** | +37.3..+47.6% (7/7)    | **KEEP**                          |
+| hello                            |   90,323 |    90,323 |                  −0.14% | −1.5..+17.6%           | PASS (≤2%)                        |
+| param                            |   82,106 |    82,246 |                  −1.38% | −8.9..+2.1% (cpu 7.3%) | PASS (≤2%); re-run below          |
+| chain                            |   86,714 |    85,664 |                  −0.60% | −6.2..+11.1%           | PASS                              |
+| notfound                         |   88,250 |    87,955 |                  −0.55% | −6.6..+2.3%            | PASS                              |
+| file-1kb (host, DEGRADED-REGIME) |    4,197 |     4,200 |                  +0.05% | −5.9..+9.5%            | PASS (paired only; absolute void) |
+
+param re-run, 9 pairs: 72,595 → 73,939, **+2.45% median of paired deltas** (range −3.9..+10.2%, cpu 8.3%) — the first reading's −1.38% was noise with the opposite sign; both inside the band, gate PASS.
+
+None of hello/param/chain/notfound/file-1kb contain a body, so a real effect
+there is impossible; the readings are the instrument's noise band.
+
+**Container record, four frameworks, rotating order, 8 rounds (spread > 5%
+extended), 404 == 100% asserted:**
+
+| scenario           |      zonix | express | fastify |   cpeak |   z/e |       z/f |       z/c |       spread% (z/e/f/c) |
+| ------------------ | ---------: | ------: | ------: | ------: | ----: | --------: | --------: | ----------------------: |
+| **post-json-echo** | **82,912** |  14,651 |  46,563 |  77,050 | 5.66× | **1.78×** | **1.08×** | 11.6 / 6.1 / 5.1 / 29.3 |
+| hello              |    157,248 |  27,725 | 171,277 | 131,904 | 5.67× |     0.92× |     1.19× |   9.0 / 4.2 / 4.7 / 7.2 |
+| routes-200-param   |    143,875 |  23,054 | 106,432 | 119,226 | 6.24× |     1.35× |     1.21× |   9.6 / 6.5 / 3.8 / 8.9 |
+| chain              |    151,974 |  27,824 | 165,606 |  99,974 | 5.46× |     0.92× |     1.52× | 12.5 / 5.8 / 6.8 / 14.1 |
+| 404                |    149,491 |  27,342 | 150,566 | 135,958 | 5.47× |     0.99× |     1.10× |  9.5 / 5.5 / 6.5 / 15.0 |
+| file-1kb           |     12,417 |   6,951 |   8,535 |   6,607 | 1.79× |     1.45× |     1.88× |   7.0 / 6.5 / 5.2 / 5.0 |
+
+Echo per round — zonix 79,162, 84,755, 83,744, 84,512, 80,045, 86,714, 82,080,
+77,075; cpeak 79,533, 57,334, 79,917, 78,854, 75,245, 78,854, 73,389, 66,144
+(two low rounds, hence 29% spread); fastify 45,731–48,086 unimodal. Fastify
+per-round on every other scenario: unimodal, fast band on small tables
+(166–175k), common band at 200 routes (104–109k) — same shape as the two
+previous matrices; zonix control 136–164k throughout.
+
+## 5. Verdict
+
+**Gap closed: 0.58× → 1.08× against cpeak (zonix now ahead, inside cpeak's
+spread — call it parity-to-slightly-ahead); 0.94× → 1.78× against Fastify;
+3.06× → 5.66× against Express.** Echo went from zonix's only decisive loss to
+its second-largest lead over Fastify, with every guard intact and one latent
+defect (reset instead of 413 on chunked overflow) fixed on the way.
+
+Why Fastify stays at ~47k was not investigated — its body path runs through
+`content-type-parser` and the hook/validation pipeline, and that is not our
+gap to close.
+
+**Kept:** listener-based read + single-chunk decode + charCode BOM check (one
+change, one mechanism). **Declined:** nothing attempted beyond it — the
+profile named one mechanism and it was the whole gap. **Reverted:** nothing.
+**Not adopted from cpeak:** dropping the Content-Length pre-check (free),
+prefix-matching the content type (looser gate), dropping BOM handling.

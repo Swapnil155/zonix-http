@@ -14,6 +14,7 @@ import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { ensureFixtures } from "./fixtures.mjs";
+import { ECHO_BODY_JSON } from "./servers/shared.mjs";
 import {
   compareRegimes,
   measureRegime,
@@ -30,6 +31,15 @@ const SCENARIOS = {
   notfound: { path: "/no-such-route", connections: 100, pipelining: 10, duration: 5 },
   "file-1kb": { path: "/file/small", connections: 100, pipelining: 10, duration: 5 },
   "file-1mb": { path: "/file/large", connections: 50, pipelining: 1, duration: 5 },
+  "post-json-echo": {
+    path: "/echo",
+    method: "POST",
+    body: ECHO_BODY_JSON,
+    headers: { "content-type": "application/json" },
+    connections: 100,
+    pipelining: 10,
+    duration: 5,
+  },
 };
 
 const args = new Map(

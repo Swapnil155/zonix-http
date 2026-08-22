@@ -3,7 +3,24 @@
 **Phase:** 7 — OPEN. Negotiator landed and wired; tests green. Next: ETag/fresh
 → 304, range/206, compression, serveStatic cache (the W1/M1 stack).
 
-## Done this session (2026-08-22 — post-audit matrix + cpeak, container)
+## Done this session (2026-08-22 — ECHO-1, the cpeak echo gap)
+
+Profile named it: `for await` over the request stream (async iterator + eos +
+async_hooks bind + microtask per chunk + GC). cpeak reads with listeners; its
+byte limit and content-type gate are real, so its speed is not a skipped
+guard. `lib/body/json.ts` now reads with data/end/error/close listeners,
+single-chunk decode without concat, charCode BOM check — every guard intact;
+mid-stream overflow now gets a 413 + Connection: close instead of a reset
+(latent defect fixed). `test/body/json-equivalence.test.ts` (rule 3: one-write
+vs dribbled vs chunked byte-identical, BOM split, chunked limit boundary, reset
+vs 413, disconnect + tripwire). 468/468. **Paired host echo +40.9% (7/7,
++37..+48%)**; gates hello −0.14%, param +2.45% (re-run), chain −0.60%, 404
+−0.55%, file-1kb +0.05% — all PASS. **Container: echo 0.58× → 1.08× cpeak,
+0.94× → 1.78× Fastify, 5.66× Express.** Section "ECHO-1 2026-08-22" in
+`bench/results.md`. Next: MH-1 (mode mechanism + harness suppressor), then
+Phase 7.
+
+## Done earlier (2026-08-22 — post-audit matrix + cpeak, container)
 
 cpeak 2.9.2 pinned exact; `bench/servers/cpeak.js`; `bench/smoke-servers.mjs`
 byte-checks all four servers per scenario (SMOKE OK host + container) before
