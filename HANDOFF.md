@@ -1,9 +1,13 @@
 # HANDOFF
 
-**Phase:** 9 — IN PROGRESS (S26, 2026-08-22). s1 done: packaging + CI.
-Carried Phase 8 gate adjudicated **PASS −0.55%** (spreads 1.1/0.9%). Next
-session: **README + scorecard** (ranges, both M1 rows, compat table from the
-asserted deviations, "Measured and rejected"), SECURITY.md; then 0.1.0.
+**Phase:** 9 — IN PROGRESS (S28, 2026-08-22). s1 packaging + CI done;
+s2 **half done: SECURITY.md shipped** (contact, threat model, guards list —
+every line cites its test). **README is HELD**: prereq is both upstream
+filings submitted (Swapnil confirmed NOT yet, S28). Next: README once he
+returns with both links (quick start, 8-row compat table, scorecard with D2
+ranges + both M1 rows + docker repro, footprint, W2 rev-4 caveats-first,
+"Measured and rejected" incl. T-1 1.362×; every number verbatim from
+results.md); then s3 cuts 0.1.0.
 
 ## Done this session (Phase 9 s1)
 
