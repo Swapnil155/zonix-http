@@ -1,9 +1,10 @@
 {
-  "name": "zonix",
+  "name": "zonix-http",
   "version": "0.1.0",
   "description": "Zero-dependency, Express-compatible HTTP framework for Node.js.",
   "type": "module",
   "license": "MIT",
+  "sideEffects": false,
   "engines": {
     "node": ">=20"
   },
@@ -13,30 +14,43 @@
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
-    }
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
   },
   "files": [
     "dist"
   ],
   "scripts": {
-    "build": "tsup lib/index.ts --format esm --dts --clean",
+    "build": "tsup lib/index.ts --format esm --dts --sourcemap --clean",
     "test": "node scripts/run-tests.mjs",
     "typecheck": "tsc --noEmit",
     "bench": "npm run build && node bench/run.mjs",
-    "format": "prettier --write \"{lib,test,bench,examples}/**/*.{ts,js}\" \"*.{json,md}\"",
+    "format": "prettier --write \"{lib,test,bench,examples,scripts}/**/*.{ts,js,mjs}\" \"*.{json,md}\" \".github/**/*.yml\"",
     "example": "tsx examples/basic.ts",
     "profile": "npm run build && node bench/profile.mjs",
     "micro": "tsx bench/micro.ts",
     "micro:serializer": "tsx bench/serializer.ts",
-    "bench:scaling": "node bench/scaling.mjs"
+    "bench:scaling": "node bench/scaling.mjs",
+    "format:check": "prettier --check \"{lib,test,bench,examples,scripts}/**/*.{ts,js,mjs}\" \"*.{json,md}\" \".github/**/*.yml\"",
+    "coverage": "node scripts/run-tests.mjs --experimental-test-coverage --test-coverage-include=lib/** --test-coverage-lines=90 --test-coverage-branches=90 --test-coverage-functions=90",
+    "pack:smoke": "node scripts/pack-smoke.mjs",
+    "prepack": "npm run build"
   },
   "keywords": [
     "http",
     "framework",
     "router",
-    "zero-dependency"
+    "express",
+    "express-compatible",
+    "zero-dependency",
+    "middleware"
   ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "devDependencies": {
     "@types/node": "^22.10.2",
     "@types/supertest": "^6.0.2",

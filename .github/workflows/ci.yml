@@ -1,0 +1,77 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test (node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [20, 22, 24]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
+      - run: npm run format:check
+      # Oracle differentials, fuzz (seed printed on failure), wire-diffs vs
+      # Express/body-parser/compression - the whole suite, every version.
+      - run: npm test
+
+  coverage:
+    name: coverage (lib/ >= 90%)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # node:test's own coverage: thresholds fail the job below 90% lines /
+      # branches / functions over lib/ only (tests and bench excluded).
+      - run: npm run coverage
+
+  pack-smoke:
+    name: npm pack smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      # Pack the tarball, install it in a temp dir, run examples/basic against
+      # the INSTALLED package (import rewritten to the package name), probe it.
+      - run: npm run pack:smoke
+
+  bench:
+    # Informational only (rule 2 is adjudicated by same-session paired A/B on
+    # a quiet machine; a shared CI runner is neither). Never blocks merging.
+    name: bench (informational)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: node bench/smoke-servers.mjs --frameworks=zonix,express,fastify
+      - run: node bench/matrix.mjs --frameworks=zonix,express,fastify --scenarios=hello,routes-6-param --rounds=3 --max-rounds=3

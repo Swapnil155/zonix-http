@@ -1,33 +1,27 @@
 # HANDOFF
 
-**Phase:** 8 — **CLOSED** (S25, 2026-08-22, `781e41d`). Exit test green: a real
-Express app ported by its import line alone, 41/41 wire-identical. s2 hello
-gate re-adjudicated VALID (spreads 6.7/6.8%) **PASS +0.39%**. **Next session:
-Phase 9 opens** (packaging + CI, then README, then publish 0.x).
+**Phase:** 9 — IN PROGRESS (S26, 2026-08-22). s1 done: packaging + CI.
+Carried Phase 8 gate adjudicated **PASS −0.55%** (spreads 1.1/0.9%). Next
+session: **README + scorecard** (ranges, both M1 rows, compat table from the
+asserted deviations, "Measured and rejected"), SECURITY.md; then 0.1.0.
 
-## Carry-over (first thing at the Phase 9 open)
+## Done this session (Phase 9 s1)
 
-Quiet host → `node bench/ab.mjs --scenario=hello --runs=7 --mode=gate` on the
-current `dist/` (s3 build: settings API, `all()`, HEAD-wildcard precedence,
-`#bodyDefaulted` field) vs `bench/.baseline-build` (still the `ed40a62` dist).
-Two runs were SPREAD-VOID (10.0%, 10.6%; medians −0.10%/+1.24%). Record it;
-that is the Phase 8 regression gate.
+Name **`zonix-http` (provisional; `zonixjs`, `@zonixtec/zonix` also free;
+`zonix` taken)** — one field + lockfile to change. package.json: sideEffects,
+exports map, provenance publishConfig, prepack, sourcemaps; scripts
+`format:check` / `coverage` (90% thresholds lib/) / `pack:smoke`;
+`.prettierignore`; `LICENSE` (MIT). `scripts/pack-smoke.mjs`: tarball →
+temp install → examples/basic against the installed package, 8 probes OK.
+`.github/workflows/ci.yml` (Node 20/22/24, coverage, pack smoke, bench
+informational) + `release.yml` (tag guard, dry-run always, publish gated on
+`vars.PUBLISH_ENABLED`). **Suite 894/894 on Node 20, 22, 24** (20/24 on the
+official images locally — no remote/gh here; first push runs Actions).
+Coverage lib/ 98.9/93.7/97.8%. Section "Phase 9, session 1" in `bench/results.md`.
 
-## Done this session (Phase 8 s3)
+## Swapnil-side before 0.1.0
 
-`ab.mjs`: per-config values + spreads, SPREAD-VOID >10%, `--mode=gate`.
-`test/compat/express-port/` + `express-port.test.ts` (43). Landed for the
-port: `app.set/get(name)/enable/disable/enabled/disabled`, `all()`,
-`zonix.json/urlencoded/raw/text/static`, HEAD wildcard yields to specific
-GET, `req.body = {}` on a skipped request (body-parser semantics). **894/894.**
-Section "Phase 8, session 3" in `bench/results.md`; earlier sessions there too.
-
-## Phase 9 plan (CLAUDE.md)
-
-Name (`zonix-http` / `zonixjs` / `@zonixtec/zonix`); exports map + types,
-`files:["dist"]`, `sideEffects:false`, engines ≥20; tsup esm+dts; CI Node
-20/22/24, coverage ≥90% lib/; publish with provenance on tags; 0.x. README:
-quick start, compat table (deviations asserted in `express-port`,
-`body-parser-diff`, `mount-express` tests), scorecard as ranges with both M1
-rows, "Measured and rejected", SECURITY.md. Swapnil-side: scorecard ranges in
-CLAUDE.md; Express docs PR; Fastify discussion — nothing filed here.
+Confirm the name; create the GitHub repo + push (CI runs); add `NPM_TOKEN`
+secret; set `PUBLISH_ENABLED=true` only when cutting 0.1.0; `repository`/
+`bugs`/`homepage` fields once the URL exists. Scorecard ranges in CLAUDE.md;
+Express docs PR; Fastify discussion — nothing filed here.

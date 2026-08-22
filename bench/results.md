@@ -2273,3 +2273,76 @@ Router` on the default export (built in `lib/index.ts`, so core still
 
 **PHASE 8 CLOSED** on the s2 gate + exit test + suite, with the s3 gate
 re-run carried as the first Phase 9 item.
+
+---
+
+# Phase 9, session 1 (2026-08-22) — carried gate; packaging; CI
+
+## 0. Carried s3 hello gate — VALID, PASS
+
+Quiet host (the quietest reading of the project): baseline `ed40a62` dist
+88,006 rps [87,443 88,403 87,981 88,109 87,904 88,006 88,224] spread **1.1%**;
+candidate (s3 dist, `781e41d`) 87,533 rps [87,610 87,763 87,507 86,982
+87,533 87,520 87,725] spread **0.9%**; **median of paired deltas −0.55%,
+range −1.3..+0.2% — PASS** (budget −2%). The Phase 8 regression gate is now
+adjudicated; the s2 gate (+0.39%) stands alongside it.
+
+## 1. Package
+
+- **Name: `zonix-http` (provisional — Swapnil's pick was a placeholder in the
+  brief).** npm as of 2026-08-22: `zonix` taken (1.0.1); `zonix-http`,
+  `zonixjs`, `@zonixtec/zonix` all E404 (free). Changing it is one field
+  (`name`) plus `npm install --package-lock-only`.
+- `package.json`: `sideEffects: false`; exports map `{ types, import,
+default }` + `./package.json`; `files: ["dist"]`; `engines >=20`;
+  `publishConfig { access: public, provenance: true }`; `prepack` builds;
+  build = `tsup --format esm --dts --sourcemap --clean` (dist: `index.js`
+  145 KB, `index.d.ts`, `index.js.map`). Scripts: `format:check`, `coverage`
+  (node:test coverage with 90% line/branch/function thresholds over `lib/**`),
+  `pack:smoke`. `.prettierignore` (lockfile, dist, bench artefacts, the
+  user-owned `CLAUDE.md`/`HISTORY.md`/`TURBO.md`). `LICENSE` (MIT) added —
+  the first pack showed the tarball had none.
+- **`scripts/pack-smoke.mjs`:** `npm pack --json` → tarball must contain only
+  `dist/*`, `package.json`, `README.md`, `LICENSE` and must include
+  `index.js/.d.ts/.js.map` → install into an empty temp project → run
+  `examples/basic.ts` with its import rewritten to the package name (from the
+  installed package, via the repo's tsx) → 8 probes (health, params+query,
+  JSON POST 201, 401 route middleware, `/files/*` sendFile, static index,
+  500 via handleErr, 404 fallback). **PACK SMOKE OK: zonix-http@0.1.0, 5
+  files, 155 KB.** Windows lessons baked in: npm is a `.cmd` shim (needs
+  `shell`), `prepack` output shares stdout with `--json` (parse the last
+  array), the child must exit before the temp dir can be removed.
+
+## 2. CI (`.github/workflows/`)
+
+- `ci.yml`: `test` matrix Node **20 / 22 / 24** (`npm ci`, typecheck, build,
+  `format:check`, `npm test`); `coverage` on 22 with the 90% thresholds;
+  `pack-smoke`; `bench` informational (`continue-on-error`, byte-smoke + a
+  3-round hello/param matrix — never a claim, a shared runner is not a quiet
+  machine).
+- `release.yml`: on `v*` tags — ci, typecheck, build, full suite, **tag must
+  equal package.json version** (guard exercised locally: `v0.1.0` passes,
+  `v0.2.0` exits 1), `npm publish --provenance --access public --dry-run`
+  always, the real publish only when repository variable
+  `PUBLISH_ENABLED == 'true'` — **disabled until 0.1.0 is cut deliberately**.
+  `id-token: write` for Sigstore provenance; `NPM_TOKEN` secret expected.
+
+## 3. Gates — the suite on three Node versions
+
+No remote and no `gh` on this machine, so Actions itself could not run; the
+matrix was executed locally instead, the same steps on the official images
+(repo tarred from the working tree — `git archive` applies `core.autocrlf`
+on Windows and had produced CRLF fixtures, which is why a first attempt
+showed two bogus Node 20 failures):
+
+| Node                              | ci  | typecheck | build | format:check | suite                                                                                                        |
+| --------------------------------- | --- | --------- | ----- | ------------ | ------------------------------------------------------------------------------------------------------------ |
+| 20.20.2 (`node:20-bookworm-slim`) | 0   | 0         | 0     | 0            | **894/894**                                                                                                  |
+| 22.20.0 (host)                    | –   | 0         | 0     | 0            | **894/894**; coverage lib/ 98.86% lines / 93.72% branches / 97.77% functions, thresholds pass; pack smoke OK |
+| 24.19.0 (`node:24-bookworm-slim`) | 0   | 0         | 0     | 0            | **894/894** (`--test-reporter=tap`; Node 24's default reporter is `spec`)                                    |
+
+The Node 20 claim is restored by measurement, not by `engines` alone.
+First push to GitHub runs the same matrix for real.
+
+Next: README + scorecard (ranges, both M1 rows, compat table with the
+asserted deviations, "Measured and rejected"), SECURITY.md; then 0.1.0.
