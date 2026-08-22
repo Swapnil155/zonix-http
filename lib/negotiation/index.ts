@@ -9,7 +9,7 @@
  * encoding choice all route through these four functions.
  */
 export { preferredMediaTypes } from "./media-type.js";
-export { preferredEncodings } from "./encoding.js";
+export { preferredEncoding, preferredEncodings } from "./encoding.js";
 export { preferredLanguages } from "./language.js";
 export { preferredCharsets } from "./charset.js";
 export { isWhitespace } from "./shared.js";

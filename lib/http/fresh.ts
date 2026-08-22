@@ -107,3 +107,54 @@ function hasNoCache(value: string): boolean {
   }
   return false;
 }
+
+/**
+ * Precondition failure (412), as `send@0.19.2` decides it for Express's
+ * `sendFile`: `If-Match` must match the ETag (weak/strong cross-match, `*`
+ * matches any existing tag, no tag at all fails); otherwise
+ * `If-Unmodified-Since` fails when the resource changed after it, or when
+ * there is no usable Last-Modified.
+ */
+export function preconditionFailed(
+  req: FreshRequestHeaders & {
+    "if-match"?: string | undefined;
+    "if-unmodified-since"?: string | undefined;
+  },
+  res: FreshResponseHeaders,
+): boolean {
+  const match = req["if-match"];
+  if (match) {
+    const etag = res.etag;
+    if (!etag) return true;
+    if (match === "*") return false;
+    return parseTokenList(match).every((m) => m !== etag && m !== "W/" + etag && "W/" + m !== etag);
+  }
+  const unmodifiedSince = req["if-unmodified-since"];
+  if (unmodifiedSince !== undefined) {
+    const since = parseHttpDate(unmodifiedSince);
+    if (!Number.isNaN(since)) {
+      const lastModified = res["last-modified"];
+      const lm = lastModified === undefined ? NaN : parseHttpDate(lastModified);
+      return Number.isNaN(lm) || lm > since;
+    }
+  }
+  return false;
+}
+
+/**
+ * `If-Range`, as `send` reads it: when the value contains a `"` it is an
+ * entity tag and must contain the response's ETag; otherwise it is a date and
+ * the resource must not have changed since. Absent → the range is usable.
+ */
+export function rangeFresh(
+  ifRange: string | undefined,
+  etag: string | undefined,
+  lastModified: string | undefined,
+): boolean {
+  if (!ifRange) return true;
+  if (ifRange.indexOf('"') !== -1) {
+    return Boolean(etag && ifRange.indexOf(etag) !== -1);
+  }
+  if (lastModified === undefined) return false;
+  return parseHttpDate(lastModified) <= parseHttpDate(ifRange);
+}

@@ -41,6 +41,7 @@
     "@types/node": "^22.10.2",
     "@types/supertest": "^6.0.2",
     "autocannon": "^8.0.0",
+    "compression": "1.8.1",
     "content-disposition": "^0.5.4",
     "cookie-signature": "^1.0.7",
     "cpeak": "2.9.2",

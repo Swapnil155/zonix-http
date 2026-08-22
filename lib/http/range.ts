@@ -94,3 +94,15 @@ function combineRanges(ranges: Ranges): Ranges {
   combined.type = ranges.type;
   return combined;
 }
+
+/** `bytes 0-99/1000`, or `bytes * /1000` (no space) for an unsatisfiable request. */
+export function contentRange(type: string, size: number, range?: Range): string {
+  return `${type} ${range ? `${range.start}-${range.end}` : "*"}/${size}`;
+}
+
+/** Does a Range header ask for bytes? (`send`'s `/^ *bytes=/`, as a scan.) */
+export function isBytesRange(header: string): boolean {
+  let i = 0;
+  while (i < header.length && header.charCodeAt(i) === 0x20) i++;
+  return header.startsWith("bytes=", i);
+}

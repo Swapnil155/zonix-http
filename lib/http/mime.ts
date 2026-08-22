@@ -162,3 +162,55 @@ export function resolveType(value: string): string | undefined {
   const bare = value.charCodeAt(0) === 0x2e /* . */ ? value.slice(1) : value;
   return MIME_TYPES[bare.toLowerCase()] ?? lookupMime(bare);
 }
+
+/**
+ * Is a response of this Content-Type worth compressing?
+ *
+ * The rule the `compressible` package (mime-db's `compressible` flag) encodes,
+ * as a predicate instead of a table: every `text/*`; JSON, JavaScript, XML and
+ * their `+json`/`+xml` vendor suffixes; form bodies; SVG; WebAssembly. Binary
+ * media (images, audio, video, fonts, archives, PDF, octet-stream) is not.
+ * Parameters are ignored. Verified against the package by differential test.
+ */
+export function isCompressible(contentType: string): boolean {
+  const semi = contentType.indexOf(";");
+  const type = (semi === -1 ? contentType : contentType.slice(0, semi)).trim().toLowerCase();
+  if (type.startsWith("text/")) return true;
+  const slash = type.indexOf("/");
+  if (slash === -1) return false;
+  const subtype = type.slice(slash + 1);
+  if (subtype.endsWith("+json") || subtype.endsWith("+xml")) return true;
+  switch (type) {
+    case "application/json":
+    case "application/javascript":
+    case "application/ecmascript":
+    case "application/xml":
+    case "application/x-www-form-urlencoded":
+    case "application/wasm":
+    case "application/rtf":
+    case "application/toml":
+    case "image/vnd.adobe.photoshop":
+    case "application/x-javascript":
+    case "application/x-httpd-php":
+    case "application/x-sh":
+    case "application/x-tar":
+    case "application/ld+json":
+    case "application/manifest+json":
+    case "image/svg+xml":
+    case "image/x-icon":
+    case "image/vnd.microsoft.icon":
+    case "image/bmp":
+    case "font/ttf":
+    case "font/otf":
+    case "application/vnd.ms-fontobject":
+    case "application/x-font-ttf":
+      return true;
+    default:
+      return false;
+  }
+}
+
+/** Every distinct Content-Type value in the table (for tests and tooling). */
+export const MIME_TYPE_VALUES: readonly string[] = Object.freeze([
+  ...new Set(Object.values(MIME_TYPES)),
+]);

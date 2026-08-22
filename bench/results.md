@@ -1799,3 +1799,81 @@ Single-range 206 on `parseRange` — next session, first item, together with
 `Accept-Ranges: bytes` on `sendFile` (Express's `send` emits it by default;
 deferred here so the 206 lands with its own wire tests rather than as an
 advertised-but-unimplemented header).
+
+---
+
+# Phase 7, session 3 (2026-08-22) — 206 + Accept-Ranges, then compression(), all oracle-first
+
+_Scope as instructed: (1) single-range 206 on `parseRange` + `Accept-Ranges:
+bytes` on `sendFile`/`serveStatic`, landing together with wire tests and the
+Express wire-diff; (2) `compression()` if time remained — it did._
+
+## 1. Byte ranges — `send@0.19.2`'s order, byte for byte
+
+- `http/fresh.ts` gained `preconditionFailed` (If-Match / If-Unmodified-Since → 412) and `rangeFresh` (If-Range by tag or date); `http/range.ts` gained
+  `contentRange` and `isBytesRange` (`send`'s `/^ *bytes=/` as a scan). Both
+  helpers are **differentially tested against `send`'s own
+  `isPreconditionFailure` / `isRangeFresh`** (`test/http/conditional.test.ts`:
+  8 × 4 × 6 × 6 precondition combinations, 10 × 4 × 6 If-Range combinations).
+- `sendFile` (and so `serveStatic`), in `send`'s order: validators →
+  `Accept-Ranges: bytes` → **412** preconditions → **304** (beats any Range) →
+  Range: `parseRange(size, header, { combine: true })`, If-Range gate,
+  **416 with `Content-Range: bytes */size`** when unsatisfiable, **206 with
+  `Content-Range` and the slice** for exactly one (combined) range, **200
+  full** for a syntactically invalid or multi-part request. Both paths:
+  buffered (≤32KB, `subarray`) and streamed (`createReadStream({ start, end })`).
+  HEAD answers the 206 headers with no body.
+- Wire tests (`test/compat/range-206.test.ts`), on a 100-byte and a 40,000-byte
+  file: Accept-Ranges on plain GET; single/suffix/open-ended/clamped ranges;
+  adjacent+overlapping parts combining to one 206; `bytes`, `items=…`,
+  multipart → 200 full; unsatisfiable, `bytes=`, `bytes=a-b` → 416 (**the
+  oracle's verdict, not my first guess — `bytes=` has an `=`, parses to no
+  satisfiable range, and Express answers 416**; the test was corrected to the
+  oracle); If-Range by tag and by date; HEAD; 304 beats 206; 412 beats both.
+  **Express wire-diff: 21 probes × 2 files — status, `Accept-Ranges`,
+  `Content-Range`, `Content-Length` and body identical to Express 4.22.2.**
+
+## 2. compression() — gzip/deflate/brotli, negotiated in-house
+
+- Oracles pinned: `compression@1.8.1` (and its nested `negotiator@0.6.4`,
+  `compressible@2.0.18`). `negotiation/encoding.ts` gained `preferredEncoding
+(accept, supported, preferred)` — negotiator 0.6.4's `encoding(available,
+preferred)` with its equal-q tie-break by the preferred list, **differential
+  23 headers × 3 configurations**. `http/mime.ts` gained `isCompressible` —
+  the `compressible` package's rule as a predicate — **differential over every
+  value in the MIME map plus 26 common types** (which caught two: mime-db marks
+  `application/toml` and `image/vnd.adobe.photoshop` compressible; added).
+- Design, pay-for-what-you-use: the middleware installs a plan on the response;
+  `send`/`json`/buffered `sendFile` consult it only when present — **zero cost
+  without the middleware** (hello gate below). In-memory bodies compress off
+  the event loop (`zlib.gzip`/`brotliCompress` callbacks) and keep a
+  `Content-Length`; streamed files go through a zlib transform and out chunked.
+  Decision order is the package's: compressible type → `Cache-Control:
+no-transform` → user filter → **`Vary: Accept-Encoding`** → threshold (1024
+  default) → existing `Content-Encoding` → HEAD → negotiate `br, gzip, deflate,
+identity` preferring `br, gzip` at equal q. **Skip-if-no-benefit**: an
+  in-memory result not smaller than the original goes out as identity. ETags
+  are computed on the uncompressed body (as Express's order produces), so 304s
+  still work; 206 responses are never compressed.
+- Wire tests (`test/middleware/compression.test.ts`): 14 Accept-Encoding
+  permutations × two routes with decode-and-compare; threshold; non-
+  compressible type (no Vary); no-transform; no-benefit on random bytes; HEAD;
+  ETag/304 interplay; buffered and streamed `sendFile`; a range never
+  compressed; `threshold: 0` / `br: false`. **Express + `compression@1.8.1`
+  wire-diff: 11 accept headers × 7 routes — status, `Content-Encoding`, `Vary`
+  and decoded body identical** (compressed bytes are deliberately not compared:
+  zlib settings are the package's business).
+
+## 3. Gates
+
+- Full suite **552/552** (was 539 after ranges; 521 at session start).
+- Oracles green: send-conditional 2/2, negotiator-preferred, compressible,
+  plus all earlier oracle suites.
+- **Paired hello A/B** (baseline = `91a92aa` dist frozen before any build this
+  session; candidate = ranges + compression): **87,379 → 87,443, median of paired deltas −0.28%, range −2.2..+1.0% — ≤2% PASS.**
+- Paired file-1kb after the range change (host, DEGRADED-REGIME, paired-only):
+  median of paired deltas **+0.00%**, range −4.4..+4.5% — inside the band.
+
+Next: the serveStatic memory cache (LRU, byte-capped, mtime-revalidated,
+off by default) on top of the 304/206/compression stack, then the M1 ≥2×
+adjudication in the container.

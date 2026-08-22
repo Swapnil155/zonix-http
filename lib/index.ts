@@ -31,10 +31,12 @@ export type {
   ZonixOptions,
   ZonixSettings,
 } from "./types.js";
-export { fresh } from "./http/fresh.js";
+export { fresh, preconditionFailed, rangeFresh } from "./http/fresh.js";
 export type { FreshRequestHeaders, FreshResponseHeaders } from "./http/fresh.js";
-export { parseRange } from "./http/range.js";
+export { contentRange, parseRange } from "./http/range.js";
 export type { Range, RangeOptions, Ranges } from "./http/range.js";
 export { etag, type EtagMiddlewareOptions } from "./middleware/etag.js";
 export { computeEtag, entityTag, statTag, type EtagOptions, type StatLike } from "./http/etag.js";
 export type { EtagGenerator, EtagOption } from "./types.js";
+export { compression, type CompressionOptions } from "./middleware/compression.js";
+export { isCompressible } from "./http/mime.js";

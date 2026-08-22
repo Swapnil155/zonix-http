@@ -1,5 +1,6 @@
 import {
   type Spec,
+  NO_MATCH,
   compareSpecs,
   isQuality,
   isWhitespace,
@@ -94,4 +95,45 @@ export function preferredEncodings(
       .map((e) => e.full);
   }
   return rankProvided(provided, accepts, specify);
+}
+
+interface PreferredSpec extends Spec {
+  encoding: string;
+}
+
+/**
+ * The single best encoding for this client — `negotiator@0.6.4`'s
+ * `encoding(available, preferred)`, which the `compression` package uses:
+ * ranks the provided encodings by the header's q-values, and breaks ties
+ * (equal q) by the `preferred` list's order instead of header order, so
+ * `Accept-Encoding: gzip, br` still picks `br` when br is preferred.
+ * `undefined` when nothing provided is acceptable.
+ */
+export function preferredEncoding(
+  accept: string | undefined,
+  provided: readonly string[],
+  preferred?: readonly string[],
+): string | undefined {
+  if (preferred === undefined) return preferredEncodings(accept, provided)[0];
+  const accepts = parseAcceptEncoding(accept ?? "");
+  const priorities: PreferredSpec[] = provided.map((value, index) => {
+    let priority: PreferredSpec = { ...NO_MATCH, encoding: value };
+    for (let i = 0; i < accepts.length; i++) {
+      const spec = specify(value, accepts[i] as EncodingEntry, index);
+      if (spec && (priority.s - spec.s || priority.q - spec.q || priority.o - spec.o) < 0) {
+        priority = { ...spec, encoding: value };
+      }
+    }
+    return priority;
+  });
+  const comparator = (a: PreferredSpec, b: PreferredSpec): number => {
+    if (a.q !== b.q) return b.q - a.q;
+    const ap = preferred.indexOf(a.encoding);
+    const bp = preferred.indexOf(b.encoding);
+    if (ap === -1 && bp === -1) return b.s - a.s || a.o - b.o || a.i - b.i;
+    if (ap !== -1 && bp !== -1) return ap - bp;
+    return ap === -1 ? 1 : -1;
+  };
+  const best = priorities.filter(isQuality).sort(comparator)[0];
+  return best === undefined ? undefined : provided[priorities.indexOf(best)];
 }

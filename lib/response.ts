@@ -19,6 +19,15 @@ import { ErrorCode, frameworkError, wasDispatched, type ZonixError } from "./err
 import { settingsOf } from "./internal/constants.js";
 import { contentDisposition } from "./http/content-disposition.js";
 import { statTag } from "./http/etag.js";
+import { preconditionFailed, rangeFresh } from "./http/fresh.js";
+import { contentRange, isBytesRange, parseRange } from "./http/range.js";
+import { isCompressible } from "./http/mime.js";
+import {
+  chooseEncoding,
+  compressBuffer,
+  compressStream,
+  type CompressionPlan,
+} from "./internal/compress.js";
 import { DEFAULT_MIME, lookupMime, resolveType } from "./http/mime.js";
 import type { ZonixRequest } from "./request.js";
 
@@ -79,6 +88,14 @@ export class ZonixResponse extends ServerResponse<ZonixRequest> {
    * @internal Wire this response to the app's central error dispatch. Called by
    * `Zonix` for every request; not part of the public API.
    */
+  /** Compression plan installed by the `compression()` middleware. */
+  #compress: CompressionPlan | undefined = undefined;
+
+  /** Install a compression plan for this response (the `compression()` middleware does this). */
+  static setCompression(res: ZonixResponse, plan: CompressionPlan): void {
+    res.#compress = plan;
+  }
+
   /** Route-level ETag override installed by the `etag()` middleware. */
   #etag: ((body: Buffer) => string | undefined) | undefined = undefined;
 
@@ -112,6 +129,15 @@ export class ZonixResponse extends ServerResponse<ZonixRequest> {
     // self-time 3.10% -> 3.39% on the hello profile), so the encode stays here.
     const body = Buffer.from(JSON.stringify(data === undefined ? null : data), "utf8");
     if (this.#notModified(body)) return;
+    if (this.#compress !== undefined) {
+      if (!this.hasHeader("Content-Type")) this.setHeader("Content-Type", JSON_CONTENT_TYPE);
+      else {
+        const existing = this.getHeader("Content-Type");
+        if (typeof existing === "string") this.setHeader("Content-Type", setCharsetUtf8(existing));
+      }
+      this.#finish(body);
+      return;
+    }
     if (this.hasHeader("Content-Type")) {
       // A caller-set type is kept, but the charset is forced to utf-8 because
       // that is what was just encoded. Express does the same via send(); the
@@ -431,6 +457,7 @@ export class ZonixResponse extends ServerResponse<ZonixRequest> {
       this.end();
       return;
     }
+    if (this.#compress !== undefined && this.#sendCompressed(body)) return;
     this.setHeader("Content-Length", body.byteLength);
     // Node drops the body for HEAD itself, but ending explicitly keeps the
     // wire output identical either way.
@@ -554,35 +581,120 @@ export class ZonixResponse extends ServerResponse<ZonixRequest> {
       this.setHeader("ETag", "W/" + statTag(stats));
     }
     if (!this.hasHeader("Content-Type")) this.setHeader("Content-Type", type);
+    if (!this.hasHeader("Accept-Ranges")) this.setHeader("Accept-Ranges", "bytes");
+
+    // Conditional requests, in `send`'s order: 412 preconditions, then 304 -
+    // which beats any Range - then the range itself.
     const reqHeaders = this.req.headers;
-    if (
-      (reqHeaders["if-none-match"] !== undefined ||
-        reqHeaders["if-modified-since"] !== undefined) &&
-      this.req.fresh
-    ) {
-      this.#sendNotModified();
-      return;
+    const conditional =
+      reqHeaders["if-match"] !== undefined ||
+      reqHeaders["if-unmodified-since"] !== undefined ||
+      reqHeaders["if-none-match"] !== undefined ||
+      reqHeaders["if-modified-since"] !== undefined;
+    if (conditional) {
+      const validators = {
+        etag: headerValue(this.getHeader("ETag")),
+        "last-modified": headerValue(this.getHeader("Last-Modified")),
+      };
+      if (preconditionFailed(reqHeaders, validators)) {
+        throw frameworkError(
+          "Precondition Failed",
+          this.sendFile,
+          ErrorCode.PRECONDITION_FAILED,
+          412,
+        );
+      }
+      if (this.req.fresh) {
+        this.#sendNotModified();
+        return;
+      }
+    }
+
+    // Single-range 206. Syntactically invalid or multi-part (after combining
+    // adjacent/overlapping parts) ranges get the full 200, as `send` does;
+    // an unsatisfiable one is a 416 carrying `Content-Range: bytes */size`.
+    let offset = 0;
+    let length = stats.size;
+    const rangeHeader = reqHeaders.range;
+    if (rangeHeader !== undefined && isBytesRange(rangeHeader)) {
+      let ranges = parseRange(stats.size, rangeHeader, { combine: true });
+      if (
+        !rangeFresh(
+          headerValue(reqHeaders["if-range"]),
+          headerValue(this.getHeader("ETag")),
+          headerValue(this.getHeader("Last-Modified")),
+        )
+      ) {
+        ranges = -2;
+      }
+      if (ranges === -1) {
+        this.setHeader("Content-Range", contentRange("bytes", stats.size));
+        throw frameworkError(
+          "Range Not Satisfiable",
+          this.sendFile,
+          ErrorCode.RANGE_NOT_SATISFIABLE,
+          416,
+        );
+      }
+      if (ranges !== -2 && ranges.length === 1) {
+        const range = ranges[0] as { start: number; end: number };
+        this.statusCode = 206;
+        this.setHeader("Content-Range", contentRange("bytes", stats.size, range));
+        offset = range.start;
+        length = range.end - range.start + 1;
+      }
     }
 
     if (stats.size <= BUFFERED_MAX_BYTES) {
-      const body = await readFileAsync(path);
+      const file = await readFileAsync(path);
       // Length comes from the bytes actually read, not from the earlier stat:
       // if the file changed in between, a stale Content-Length would corrupt
       // the response framing. The streamed path cannot make this check.
-      if (!this.hasHeader("Content-Type")) this.setHeader("Content-Type", type);
+      const body =
+        offset === 0 && length === file.byteLength ? file : file.subarray(offset, offset + length);
+      if (this.#compress !== undefined && this.#sendCompressed(body)) return;
       this.setHeader("Content-Length", body.byteLength);
-      this.end(body);
+      if (this.req.method === "HEAD") this.end();
+      else this.end(body);
       return;
     }
 
-    if (!this.hasHeader("Content-Type")) this.setHeader("Content-Type", type);
-    this.setHeader("Content-Length", stats.size);
+    // A streamed file compresses through a zlib transform; its size is not
+    // known up front, so the response is chunked. Partial content is never
+    // compressed (a 206 is a byte range of the representation).
+    const encoding =
+      this.#compress !== undefined && this.statusCode !== 206
+        ? this.#negotiateEncoding(length)
+        : undefined;
+    if (encoding !== undefined) {
+      this.removeHeader("Content-Length");
+      this.setHeader("Content-Encoding", encoding);
+      if (this.req.method === "HEAD") {
+        this.end();
+        return;
+      }
+      await pipeline(
+        createReadStream(path, { start: offset, end: Math.max(offset, offset + length - 1) }),
+        compressStream(encoding, this.#compress as CompressionPlan),
+        this,
+      );
+      return;
+    }
+
+    this.setHeader("Content-Length", length);
+    if (this.req.method === "HEAD") {
+      this.end();
+      return;
+    }
 
     // pipeline() gives backpressure, error propagation and cleanup of both ends.
     // highWaterMark is left at Node's default: 256KB was measured at -7.6% on
     // file-1mb (every paired run negative). The path is ~24% idle, so fewer,
     // larger reads buy nothing and cost more per allocation.
-    await pipeline(createReadStream(path), this);
+    await pipeline(
+      createReadStream(path, { start: offset, end: Math.max(offset, offset + length - 1) }),
+      this,
+    );
   }
 
   /**
@@ -617,6 +729,56 @@ export class ZonixResponse extends ServerResponse<ZonixRequest> {
     this.end();
   }
 
+  /**
+   * Decide whether this response may be compressed at all, and with what.
+   * Sets `Vary: Accept-Encoding` whenever the type is compressible (so caches
+   * key on it even when this particular client gets identity), then
+   * negotiates via the in-house negotiator. `undefined` means send identity.
+   */
+  #negotiateEncoding(length: number): string | undefined {
+    const plan = this.#compress as CompressionPlan;
+    const type = this.getHeader("Content-Type");
+    if (typeof type !== "string" || !isCompressible(type)) return undefined;
+    const cacheControl = this.getHeader("Cache-Control");
+    if (typeof cacheControl === "string" && hasNoTransform(cacheControl)) return undefined;
+    if (plan.filter !== undefined && !plan.filter(this.req, this)) return undefined;
+    // From here the response is "compressible" and caches must key on the
+    // header, whatever this particular client ends up receiving.
+    this.vary("Accept-Encoding");
+    if (length < plan.threshold) return undefined;
+    if (this.hasHeader("Content-Encoding")) return undefined;
+    if (this.req.method === "HEAD") return undefined;
+    return chooseEncoding(this.req.headers["accept-encoding"], plan);
+  }
+
+  /**
+   * Compress an in-memory body and send it, or return `false` to let the
+   * caller send identity. Skips bodies under the threshold, non-compressible
+   * types, HEAD, and - after compressing - any result that is not smaller
+   * than the original (no benefit, so the bytes go out as they were).
+   */
+  #sendCompressed(body: Buffer): boolean {
+    const plan = this.#compress as CompressionPlan;
+    if (isBodyless(this.statusCode) || this.statusCode === 206) return false;
+    const encoding = this.#negotiateEncoding(body.byteLength);
+    if (encoding === undefined) return false;
+    compressBuffer(encoding, body, plan, (err, compressed) => {
+      if (err !== null) {
+        this.#sink?.(err);
+        return;
+      }
+      if (compressed.byteLength >= body.byteLength) {
+        this.setHeader("Content-Length", body.byteLength);
+        this.end(body);
+        return;
+      }
+      this.setHeader("Content-Encoding", encoding);
+      this.setHeader("Content-Length", compressed.byteLength);
+      this.end(compressed);
+    });
+    return true;
+  }
+
   #assertOpen(fn: (...args: never[]) => unknown): void {
     if (this.headersSent) {
       throw frameworkError(
@@ -638,4 +800,19 @@ function normalizeFormatKey(key: string): string {
     return (semi === -1 ? key : key.slice(0, semi)).trim();
   }
   return resolveType(key) ?? DEFAULT_MIME;
+}
+
+/** A response header as the conditional helpers want it: a string or undefined. */
+function headerValue(value: number | string | string[] | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value === "string") return value;
+  return Array.isArray(value) ? value.join(", ") : String(value);
+}
+
+/** `Cache-Control` carries a bare `no-transform` directive (comma-split, trimmed). */
+function hasNoTransform(value: string): boolean {
+  for (const piece of value.split(",")) {
+    if (piece.trim().toLowerCase() === "no-transform") return true;
+  }
+  return false;
 }

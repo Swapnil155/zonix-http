@@ -40,6 +40,8 @@ export const ErrorCode = {
   FORBIDDEN_PATH: "ERR_ZONIX_FORBIDDEN_PATH",
   /** `res.format` found no acceptable representation (HTTP 406). */
   NOT_ACCEPTABLE: "ERR_ZONIX_NOT_ACCEPTABLE",
+  PRECONDITION_FAILED: "ERR_ZONIX_PRECONDITION_FAILED",
+  RANGE_NOT_SATISFIABLE: "ERR_ZONIX_RANGE_NOT_SATISFIABLE",
 } as const;
 
 export type ErrorCodeValue = (typeof ErrorCode)[keyof typeof ErrorCode];

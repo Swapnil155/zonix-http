@@ -1,11 +1,22 @@
 # HANDOFF
 
 **Phase:** 7 — IN PROGRESS. Done oracle-first: negotiator + accepts/format
-(S14), fresh/range (s1), ETag + 304s in send/json/sendFile/serveStatic (s2,
-ETag default OFF, opt-in per app/route). Next: single-range 206 +
-Accept-Ranges, then compression(), static cache, M1 ≥2× in the container.
+(S14), fresh/range (s1), ETag + 304s (s2), single-range 206 + Accept-Ranges +
+412/If-Range, and compression() (s3). Next: serveStatic memory cache, then
+the M1 ≥2× adjudication in the container; then Phase 7 exit test + gate.
 
-## Done this session (2026-08-22 — Phase 7 session 2: ETag + 304s)
+## Done this session (2026-08-22 — Phase 7 session 3: 206 + compression)
+
+Ranges in `send@0.19.2`'s exact order (412 → 304 → Range → 416/206/200),
+`Accept-Ranges: bytes`, If-Range by tag/date; helpers differential vs send's
+own methods; 21-probe × 2-file Express wire-diff identical. `compression()`:
+gzip/deflate/br via node:zlib, in-house `preferredEncoding` (negotiator 0.6.4
+tie-break, differential), `isCompressible` (differential vs `compressible`),
+Vary/threshold/no-transform/HEAD/no-benefit/206-untouched; zero cost when not
+mounted; Express+compression@1.8.1 wire-diff 11×7 identical. **552/552; hello
+gate 87,379 → 87,443, median of paired deltas −0.28%, range −2.2..+1.0% PASS.** Section "Phase 7, session 3" in `bench/results.md`.
+
+## Done earlier (2026-08-22 — Phase 7 session 2: ETag + 304s)
 
 `etag@1.8.1` pinned exact; `lib/http/etag.ts` (entityTag/statTag/computeEtag/
 compileEtag) with differential + 10k fuzz green BEFORE wiring. App option
