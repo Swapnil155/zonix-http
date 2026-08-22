@@ -18,7 +18,10 @@ import {
   preferredLanguages,
   preferredMediaTypes,
 } from "./negotiation/index.js";
+import { fresh as isFresh } from "./http/fresh.js";
+import { parseRange, type RangeOptions, type Ranges } from "./http/range.js";
 import { parseQuery } from "./query/simple.js";
+import type { ZonixResponse } from "./response.js";
 import type { StringMap, ZonixSettings } from "./types.js";
 
 /** Everything an Express-compat accessor computes once and then reuses. */
@@ -58,6 +61,16 @@ export class ZonixRequest extends IncomingMessage {
   #query: StringMap | undefined = undefined;
   #path: string | undefined = undefined;
   #compat: CompatCache | undefined = undefined;
+  #res: ZonixResponse | undefined = undefined;
+
+  /**
+   * Link the response this request will be answered with. One pointer store
+   * per request, done by the server callback; `fresh`/`stale` need the
+   * response's validators and Node links only the other direction (`res.req`).
+   */
+  static attachResponse(req: ZonixRequest, res: ZonixResponse): void {
+    req.#res = res;
+  }
 
   /**
    * Parsed query string, computed on first access and cached for the life of the
@@ -270,6 +283,47 @@ export class ZonixRequest extends IncomingMessage {
     return preferredLanguages(header, flat)[0] ?? false;
   }
 
+  /**
+   * Conditional GET: is the client's cached copy still good?
+   *
+   * Express semantics, pinned by the `fresh@0.5.2` differential: only GET and
+   * HEAD can be fresh, only against a 2xx or 304 status, and the comparison
+   * uses the `ETag` / `Last-Modified` the response has set SO FAR - so read it
+   * after setting them, as the Express docs do.
+   */
+  get fresh(): boolean {
+    const method = this.method;
+    if (method !== "GET" && method !== "HEAD") return false;
+    const res = this.#res;
+    if (res === undefined) return false;
+    const status = res.statusCode;
+    if ((status >= 200 && status < 300) || status === 304) {
+      return isFresh(this.headers, {
+        etag: headerString(res.getHeader("ETag")),
+        "last-modified": headerString(res.getHeader("Last-Modified")),
+      });
+    }
+    return false;
+  }
+
+  /** `!fresh`. */
+  get stale(): boolean {
+    return !this.fresh;
+  }
+
+  /**
+   * Parse the `Range` header against a resource of `size` bytes.
+   *
+   * `undefined` when there is no header; `-2` when it is malformed; `-1` when
+   * no range is satisfiable; otherwise the ranges with the unit on `.type`.
+   * `range-parser@1.2.1` semantics, including `{ combine: true }`.
+   */
+  range(size: number, options?: RangeOptions): Ranges | -1 | -2 | undefined {
+    const header = this.headers.range;
+    if (!header) return undefined;
+    return parseRange(size, header, options);
+  }
+
   /** The app's compiled settings, reached through the server this socket belongs to. */
   #settings(): ZonixSettings {
     return settingsOf(this.socket);
@@ -290,4 +344,11 @@ function acceptHeader(headers: IncomingHttpHeaders, name: string): string | unde
   const value = (headers as Record<string, string | string[] | undefined>)[name];
   if (value === undefined) return undefined;
   return Array.isArray(value) ? value.join(", ") : value;
+}
+
+/** A response header as `fresh` wants it: the string, or undefined. */
+function headerString(value: number | string | string[] | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value === "string") return value;
+  return Array.isArray(value) ? value.join(", ") : String(value);
 }

@@ -283,6 +283,32 @@ export function registerDocsRoutes(app: DocsApp, bodyParser: any): void {
       },
     });
   });
+
+  // https://expressjs.com/en/4x/api.html#req.fresh - the documented idiom:
+  // set the validators, then ask.
+  app.get("/fresh", (req: any, res: any) => {
+    res.set("ETag", '"v1"');
+    res.set("Last-Modified", "Sat, 01 Jan 2000 00:00:00 GMT");
+    if (req.fresh) return res.status(304).end();
+    res.json({ fresh: req.fresh, stale: req.stale });
+  });
+  app.post("/fresh", (req: any, res: any) => {
+    res.set("ETag", '"v1"');
+    res.json({ fresh: req.fresh, stale: req.stale });
+  });
+  // https://expressjs.com/en/4x/api.html#req.range
+  app.get("/range", (req: any, res: any) => {
+    const range = req.range(1000);
+    if (range === undefined) return res.json({ range: null });
+    if (typeof range === "number") return res.json({ range });
+    res.json({ type: range.type, ranges: [...range] });
+  });
+  app.get("/range/combine", (req: any, res: any) => {
+    const range = req.range(1000, { combine: true });
+    if (range === undefined) return res.json({ range: null });
+    if (typeof range === "number") return res.json({ range });
+    res.json({ type: range.type, ranges: [...range] });
+  });
 }
 
 /** Every route above, as a replayable request. */
@@ -382,4 +408,76 @@ export const DOCS_REQUESTS: DocsRequest[] = [
     headers: { Accept: "text/plain;q=0.9, text/html;q=0.5" },
   },
   { name: "res.format short keys, no Accept", method: "GET", path: "/format/short" },
+  {
+    name: "fresh: matching etag",
+    method: "GET",
+    path: "/fresh",
+    headers: { "if-none-match": '"v1"' },
+  },
+  {
+    name: "fresh: weak etag matches strong",
+    method: "GET",
+    path: "/fresh",
+    headers: { "if-none-match": 'W/"v1"' },
+  },
+  { name: "fresh: star", method: "GET", path: "/fresh", headers: { "if-none-match": "*" } },
+  {
+    name: "fresh: non-matching etag",
+    method: "GET",
+    path: "/fresh",
+    headers: { "if-none-match": '"v2"' },
+  },
+  {
+    name: "fresh: list with a match",
+    method: "GET",
+    path: "/fresh",
+    headers: { "if-none-match": '"v0", "v1"' },
+  },
+  {
+    name: "fresh: if-modified-since newer",
+    method: "GET",
+    path: "/fresh",
+    headers: { "if-modified-since": "Sat, 01 Jan 2000 00:00:00 GMT" },
+  },
+  {
+    name: "fresh: if-modified-since older",
+    method: "GET",
+    path: "/fresh",
+    headers: { "if-modified-since": "Fri, 31 Dec 1999 00:00:00 GMT" },
+  },
+  {
+    name: "fresh: no-cache overrides",
+    method: "GET",
+    path: "/fresh",
+    headers: { "if-none-match": '"v1"', "cache-control": "no-cache" },
+  },
+  { name: "fresh: no validators", method: "GET", path: "/fresh" },
+  {
+    name: "fresh: POST is never fresh",
+    method: "POST",
+    path: "/fresh",
+    headers: { "if-none-match": '"v1"' },
+  },
+  { name: "range: none", method: "GET", path: "/range" },
+  { name: "range: single", method: "GET", path: "/range", headers: { range: "bytes=0-99" } },
+  { name: "range: suffix", method: "GET", path: "/range", headers: { range: "bytes=-100" } },
+  {
+    name: "range: multi",
+    method: "GET",
+    path: "/range",
+    headers: { range: "bytes=0-5,3-8,20-30" },
+  },
+  {
+    name: "range: multi combined",
+    method: "GET",
+    path: "/range/combine",
+    headers: { range: "bytes=0-5,3-8,20-30" },
+  },
+  {
+    name: "range: unsatisfiable",
+    method: "GET",
+    path: "/range",
+    headers: { range: "bytes=5000-6000" },
+  },
+  { name: "range: malformed", method: "GET", path: "/range", headers: { range: "bytes" } },
 ];

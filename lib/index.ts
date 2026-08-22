@@ -31,3 +31,7 @@ export type {
   ZonixOptions,
   ZonixSettings,
 } from "./types.js";
+export { fresh } from "./http/fresh.js";
+export type { FreshRequestHeaders, FreshResponseHeaders } from "./http/fresh.js";
+export { parseRange } from "./http/range.js";
+export type { Range, RangeOptions, Ranges } from "./http/range.js";

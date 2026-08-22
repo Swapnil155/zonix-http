@@ -49,6 +49,7 @@ export class Zonix {
       (req, res) => {
         // Errors raised outside the chain (an ignored sendFile promise, a socket
         // failure mid-stream) still land in the one dispatcher.
+        ZonixRequest.attachResponse(req, res);
         ZonixResponse.attachErrorSink(res, (err: unknown) => {
           this.#fail(err, req, res);
         });

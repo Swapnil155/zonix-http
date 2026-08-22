@@ -1,9 +1,23 @@
 # HANDOFF
 
-**Phase:** 7 — OPEN. Negotiator landed and wired; tests green. Next: ETag/fresh
-→ 304, range/206, compression, serveStatic cache (the W1/M1 stack).
+**Phase:** 7 — IN PROGRESS. Negotiator + accepts/format (S14) and
+fresh/range (this session) landed oracle-first. Next: ETag (`etag` oracle)
+→ 304 in send/sendFile/serveStatic, 206, compression(), static cache, M1.
 
-## Done this session (2026-08-22 — MH-1, the mode hunt: CLOSED as mood)
+## Done this session (2026-08-22 — Phase 7 session 1: fresh + range, oracle-first)
+
+Items 1–2 (negotiator pinned, `lib/negotiation/`, differential + fuzz,
+req.accepts family, res.format) were ALREADY DONE in Session 14 (`68bb692`)
+— verified in place, 16/16 green, not rebuilt. Deferred P6 items landed:
+`fresh@0.5.2` + `range-parser@1.2.1` pinned exact; `lib/http/fresh.ts`
+(linear; `If-None-Match: *` landmine preserved) and `lib/http/range.ts`;
+`test/http/fresh-range.test.ts` (6) + `test/fuzz/fresh-range.fuzz.ts` (3, three
+seeds) BEFORE wiring; `req.fresh/stale/range` wired with Express semantics via a
+one-pointer `ZonixRequest.attachResponse` link; 17 new docs-corpus requests
+wire-identical to Express. **494/494; hello gate +0.38% (−1.0..+0.9) PASS.**
+Section "Phase 7, session 1" in `bench/results.md`.
+
+## Done earlier (2026-08-22 — MH-1, the mode hunt: CLOSED as mood)
 
 `bench/mh1/{variant.js,suppressor.mjs,modes.mjs}`. Container, 3 runs, clean.
 **Located:** a 200-route fast/common pair under --trace-opt/--trace-deopt/

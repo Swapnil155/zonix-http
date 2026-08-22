@@ -1655,3 +1655,65 @@ throughput −35%, rate depending on table size × routes requested — and that
 a legitimate, narrow observation to put to Fastify as a discussion issue with
 `modes.mjs` + `suppressor.mjs` attached. Swapnil decides; nothing is filed
 from this repo.
+
+---
+
+# Phase 7, session 1 (2026-08-22) — negotiator verified in place; fresh + range landed oracle-first
+
+_No riders. Scope as instructed: (1) negotiator pinned + `lib/negotiation/`
+with differential + fuzz before wiring; (2) `req.accepts` family + `res.format`;
+deferred P6 `fresh`/`range` if time remained; (3) gates._
+
+**Items 1–2 were already done in Session 14 (`68bb692`) and were verified, not
+rebuilt:** `negotiator@0.6.3` pinned exact; `lib/negotiation/{shared,media-type,
+encoding,language,charset,index}.ts`; `test/http/negotiation.test.ts` (11) +
+`test/fuzz/accept.fuzz.ts` (5) — **16/16 green this session**; `req.accepts/
+acceptsEncodings/acceptsCharsets/acceptsLanguages` and `res.format` wired and
+wire-diffed against Express 4.22.2 in the docs corpus.
+
+**Deferred P6 items, landed the same way (oracle first):**
+
+- Oracles pinned exact: `fresh@0.5.2`, `range-parser@1.2.1` (the versions
+  Express 4.22.2 resolves).
+- `lib/http/fresh.ts` — `fresh(req, res)` with the oracle's exact acceptance:
+  token-list split where only 0x20 is trimmed (tabs are token bytes), weak/
+  strong ETag cross-matching, `Date.parse` for dates, and the landmine
+  preserved on purpose — **`If-None-Match: *` is unconditional**, fresh even
+  against a response with no validator. The original's one regex
+  (`no-cache` directive) is a comma-split with JS-`\s` trimming (decision 11);
+  `isWhitespace` is now exported from `negotiation/index.ts` so `http/` imports
+  the entry point, never a deep path.
+- `lib/http/range.ts` — `parseRange(size, str, {combine})` → `-2 | -1 | Ranges`
+  with `.type`, `parseInt` semantics (`bytes=1abc-5` is `1–5`, as Express
+  accepts), `split("-")[1]` semantics reproduced without `split`, and the
+  combine/ordering algorithm verbatim.
+- Tests **before wiring**: `test/http/fresh-range.test.ts` — 16 × 7 × 16
+  If-None-Match × ETag × Cache-Control combinations, 9 × 9 × 4 date
+  combinations, 32 Range headers × 5 sizes × combine on/off, every one
+  compared with the oracle (6/6); `test/fuzz/fresh-range.fuzz.ts` — 10k
+  generated header sets per parser, byte parity, linear-time check (3/3 across
+  three seeds).
+- Wiring: `req.fresh` / `req.stale` (Express semantics: GET/HEAD only, 2xx or
+  304 only, against the `ETag`/`Last-Modified` the response has set so far)
+  and `req.range(size, options)`. `req.fresh` needs the response, and Node
+  links only `res.req`; the server callback now stores one pointer
+  (`ZonixRequest.attachResponse`) per request — the single hot-path change of
+  the session, adjudicated below. Barrel exports `fresh`, `parseRange` and
+  their types.
+- Docs corpus: `/fresh` (the documented idiom — set validators, then ask,
+  304 when fresh), `/fresh` POST, `/range`, `/range/combine`; **17 new
+  requests wire-identical to Express 4.22.2** (matching/weak/star/non-matching/
+  list ETags, If-Modified-Since both ways, `no-cache` override, no validators,
+  POST never fresh; no/single/suffix/multi/combined/unsatisfiable/malformed
+  ranges).
+
+**Gates:** full suite **494/494** (was 468); oracle differentials green
+(negotiator 16, fresh/range 6 + fuzz 3 × 3 seeds); **paired hello A/B
+(baseline = HEAD `43f5470` dist frozen before the build): 87,149 → 87,315,
+median of paired deltas +0.38%, range −1.0..+0.9% — ≤2% gate PASS**; the
+pointer store costs nothing the instrument can see.
+
+**Next sessions, in order:** `http/etag.ts` (oracle `etag`, weak sha1-base64)
+→ 304 in `send`/`sendFile`/`serveStatic` using `fresh` (ETag default off per
+rule 4); single-range 206 using `parseRange`; `compression()`; serveStatic
+memory cache; then the M1 ≥2× adjudication in the container.
