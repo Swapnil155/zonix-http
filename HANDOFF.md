@@ -4,10 +4,9 @@
 s2 **half done: SECURITY.md shipped** (contact, threat model, guards list —
 every line cites its test). **README is HELD**: prereq is both upstream
 filings submitted (Swapnil confirmed NOT yet, S28). Next: README once he
-returns with both links (quick start, 8-row compat table, scorecard with D2
-ranges + both M1 rows + docker repro, footprint, W2 rev-4 caveats-first,
-"Measured and rejected" incl. T-1 1.362×; every number verbatim from
-results.md); then s3 cuts 0.1.0.
+returns with both links (quick start, 8-row compat table, scorecard: D2 ranges
++ both M1 rows + docker repro, footprint, W2 rev-4 caveats-first, "Measured
+and rejected" incl. T-1 1.362×; numbers verbatim from results.md); s3 = 0.1.0.
 
 ## Done this session (Phase 9 s1)
 
@@ -27,5 +26,5 @@ Coverage lib/ 98.9/93.7/97.8%. Section "Phase 9, session 1" in `bench/results.md
 
 Confirm the name; create the GitHub repo + push (CI runs); add `NPM_TOKEN`
 secret; set `PUBLISH_ENABLED=true` only when cutting 0.1.0; `repository`/
-`bugs`/`homepage` fields once the URL exists. Scorecard ranges in CLAUDE.md;
-Express docs PR; Fastify discussion — nothing filed here.
+`bugs`/`homepage` once the URL exists; file the Express docs PR + Fastify
+discussion (nothing filed here) — both unblock the README.
