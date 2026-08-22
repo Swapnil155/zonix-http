@@ -44,6 +44,7 @@
     "content-disposition": "^0.5.4",
     "cookie-signature": "^1.0.7",
     "cpeak": "2.9.2",
+    "etag": "1.8.1",
     "express": "^4.21.2",
     "fastify": "5.12.1",
     "find-my-way": "9.8.0",

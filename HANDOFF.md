@@ -1,10 +1,26 @@
 # HANDOFF
 
-**Phase:** 7 — IN PROGRESS. Negotiator + accepts/format (S14) and
-fresh/range (this session) landed oracle-first. Next: ETag (`etag` oracle)
-→ 304 in send/sendFile/serveStatic, 206, compression(), static cache, M1.
+**Phase:** 7 — IN PROGRESS. Done oracle-first: negotiator + accepts/format
+(S14), fresh/range (s1), ETag + 304s in send/json/sendFile/serveStatic (s2,
+ETag default OFF, opt-in per app/route). Next: single-range 206 +
+Accept-Ranges, then compression(), static cache, M1 ≥2× in the container.
 
-## Done this session (2026-08-22 — Phase 7 session 1: fresh + range, oracle-first)
+## Done this session (2026-08-22 — Phase 7 session 2: ETag + 304s)
+
+`etag@1.8.1` pinned exact; `lib/http/etag.ts` (entityTag/statTag/computeEtag/
+compileEtag) with differential + 10k fuzz green BEFORE wiring. App option
+`etag` (default OFF, rule 4) + route-level `etag()` middleware; `send`/`json`
+generate-then-fresh→304 in Express's order (two property reads when no
+conditional header); `sendFile`/`serveStatic`: Last-Modified always, weak stat
+tag when on, **304 before reading the file**. `test/compat/etag-304.test.ts`
+(raw-socket matrix incl. `*`, weak/strong both ways, HEAD, POST, sendFile by
+tag/date) + Express wire-diff with Express's default ETag (tags byte-identical,
+decisions identical) + 11 docs-corpus requests. **Found by the wire-diff and
+fixed: HEAD was a 404 — router now falls back HEAD→GET like Express/Fastify.**
+**521/521; hello gate +0.29% (−0.4..+1.3) PASS.** Not done: 206 (next, with
+Accept-Ranges). Section "Phase 7, session 2" in `bench/results.md`.
+
+## Done earlier (2026-08-22 — Phase 7 session 1: fresh + range, oracle-first)
 
 Items 1–2 (negotiator pinned, `lib/negotiation/`, differential + fuzz,
 req.accepts family, res.format) were ALREADY DONE in Session 14 (`68bb692`)

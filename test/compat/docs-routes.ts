@@ -309,6 +309,26 @@ export function registerDocsRoutes(app: DocsApp, bodyParser: any): void {
     if (typeof range === "number") return res.json({ range });
     res.json({ type: range.type, ranges: [...range] });
   });
+
+  // https://expressjs.com/en/4x/api.html#res.send - freshness is checked by
+  // send() itself: a handler that sets its own ETag and then sends gets a 304
+  // for a matching If-None-Match without asking req.fresh.
+  app.get("/etag/manual", (req: any, res: any) => {
+    res.set("ETag", '"manual-1"');
+    res.send("the body");
+  });
+  app.get("/etag/manual-json", (req: any, res: any) => {
+    res.set("ETag", 'W/"manual-2"');
+    res.json({ body: true });
+  });
+  app.get("/etag/last-modified", (req: any, res: any) => {
+    res.set("Last-Modified", "Sat, 01 Jan 2000 00:00:00 GMT");
+    res.send("dated body");
+  });
+  app.post("/etag/manual", (req: any, res: any) => {
+    res.set("ETag", '"manual-1"');
+    res.send("the body");
+  });
 }
 
 /** Every route above, as a replayable request. */
@@ -480,4 +500,65 @@ export const DOCS_REQUESTS: DocsRequest[] = [
     headers: { range: "bytes=5000-6000" },
   },
   { name: "range: malformed", method: "GET", path: "/range", headers: { range: "bytes" } },
+  {
+    name: "etag manual: match -> 304 from send",
+    method: "GET",
+    path: "/etag/manual",
+    headers: { "if-none-match": '"manual-1"' },
+  },
+  {
+    name: "etag manual: weak form matches strong tag",
+    method: "GET",
+    path: "/etag/manual",
+    headers: { "if-none-match": 'W/"manual-1"' },
+  },
+  {
+    name: "etag manual: star",
+    method: "GET",
+    path: "/etag/manual",
+    headers: { "if-none-match": "*" },
+  },
+  {
+    name: "etag manual: mismatch -> 200",
+    method: "GET",
+    path: "/etag/manual",
+    headers: { "if-none-match": '"manual-0"' },
+  },
+  { name: "etag manual: no conditional -> 200", method: "GET", path: "/etag/manual" },
+  {
+    name: "etag manual json: strong form matches weak tag",
+    method: "GET",
+    path: "/etag/manual-json",
+    headers: { "if-none-match": '"manual-2"' },
+  },
+  {
+    name: "etag manual json: match -> 304",
+    method: "GET",
+    path: "/etag/manual-json",
+    headers: { "if-none-match": 'W/"manual-2"' },
+  },
+  {
+    name: "etag last-modified: not modified since -> 304",
+    method: "GET",
+    path: "/etag/last-modified",
+    headers: { "if-modified-since": "Sat, 01 Jan 2000 00:00:00 GMT" },
+  },
+  {
+    name: "etag last-modified: modified since -> 200",
+    method: "GET",
+    path: "/etag/last-modified",
+    headers: { "if-modified-since": "Fri, 31 Dec 1999 00:00:00 GMT" },
+  },
+  {
+    name: "etag last-modified: no-cache -> 200",
+    method: "GET",
+    path: "/etag/last-modified",
+    headers: { "if-modified-since": "Sat, 01 Jan 2000 00:00:00 GMT", "cache-control": "no-cache" },
+  },
+  {
+    name: "etag manual: POST never 304",
+    method: "POST",
+    path: "/etag/manual",
+    headers: { "if-none-match": '"manual-1"' },
+  },
 ];

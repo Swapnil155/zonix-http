@@ -6,6 +6,7 @@ import { kSettings } from "./internal/constants.js";
 import { dispatchError } from "./internal/dispatch-error.js";
 import { isThenable, runChain } from "./internal/run-chain.js";
 import { ZonixRequest } from "./request.js";
+import { compileEtag } from "./http/etag.js";
 import { ZonixResponse } from "./response.js";
 import { Router, type Route, type RouteMatch } from "./router/index.js";
 import type {
@@ -43,6 +44,7 @@ export class Zonix {
       trust: compileTrust(options.trustProxy),
       subdomainOffset: options.subdomainOffset ?? 2,
       cookieSecret: options.cookieSecret,
+      etag: compileEtag(options.etag),
     };
     this.server = http.createServer(
       { IncomingMessage: ZonixRequest, ServerResponse: ZonixResponse },

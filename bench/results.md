@@ -1717,3 +1717,85 @@ pointer store costs nothing the instrument can see.
 → 304 in `send`/`sendFile`/`serveStatic` using `fresh` (ETag default off per
 rule 4); single-range 206 using `parseRange`; `compression()`; serveStatic
 memory cache; then the M1 ≥2× adjudication in the container.
+
+---
+
+# Phase 7, session 2 (2026-08-22) — ETag oracle-first; 304s wired; HEAD fallback found by the wire-diff
+
+_Scope as instructed: (1) `http/etag.ts` against a pinned `etag`, differential +
+fuzz before wiring; (2) fresh-based conditional GET in `send`/`json`/`sendFile`/
+`serveStatic`, ETag default OFF (rule 4), opt-in per app and per route,
+wire-level 304 assertions incl. `If-None-Match: *` and weak/strong, Express
+wire-diff corpus; (3) 206 only if time remained — it did not; next session._
+
+## 1. ETag, oracle first
+
+`etag@1.8.1` pinned exact (Express 4.22.2's resolution; also what `send@0.19.2`
+uses for files). `lib/http/etag.ts`: `entityTag` (`"<len hex>-<sha1 base64 27>"`,
+the fixed empty tag), `statTag` (`"<size hex>-<mtime hex>"`), `computeEtag`
+with the oracle's exact dispatch (stat-shaped objects → weak by default; bad
+input → the same `TypeError`s), and `compileEtag` for the app option.
+`test/http/etag.test.ts` — 12 curated entities × strong/weak/default, real
+`fs.Stats` and stat-shaped objects, the rejection set, and a **10k-entity +
+2k-stat seeded fuzz, byte parity** — **4/4 across three seeds, before any
+wiring.**
+
+## 2. 304s wired — Express's order, zonix's default
+
+- **App option** `etag: false | true | "weak" | "strong" | (body) => tag`,
+  **off by default (rule 4)**; **route-level** `etag({ mode })` middleware
+  installs a per-response generator and overrides the app setting for that
+  route only. Barrel exports `etag` (middleware), `computeEtag`, `entityTag`,
+  `statTag`.
+- `send`/`json` (`#notModified`): generate an ETag when enabled and none is
+  set; then, only if the request carries `If-None-Match` or
+  `If-Modified-Since`, evaluate `req.fresh` → 304 with `Content-Type`,
+  `Content-Length`, `Transfer-Encoding` dropped and the validators kept.
+  **A request without a conditional header costs two property reads** — the
+  hello gate below is the receipt. As in Express, freshness is checked by
+  `send` itself, so a handler that sets its own `ETag`/`Last-Modified` and
+  sends gets the 304 without asking `req.fresh`.
+- `sendFile` (and therefore `serveStatic`): **`Last-Modified` always** (as
+  `send` does for Express), a **weak stat tag when ETags are on**, and a
+  fresh conditional GET answered **304 before a single byte of the file is
+  read** — the W1/M1 mechanism, now in place for the static cache to sit on.
+- Tests — `test/compat/etag-304.test.ts`, raw sockets: off by default / on
+  per app / on per route; matching tag → 304 with body headers dropped and
+  validators kept; **weak and strong forms cross-match both ways**, lists,
+  mismatch → 200; **`If-None-Match: *` → 304 even with ETags off**; POST
+  never fresh; HEAD → 304; `sendFile` 304 by tag and by date, 200 on an older
+  `If-Modified-Since`; a handler-set tag is not overwritten and drives the 304. **Express wire-diff**: the same routes on real Express with its
+  default weak ETag vs `zonix({ etag: "weak" })` — **generated tags
+  byte-identical, 304 decisions identical, tags round-trip across the two
+  servers; `sendFile` stat tag and `Last-Modified` identical and all four
+  conditional probes agree.** Docs corpus gained `/etag/manual`,
+  `/etag/manual-json`, `/etag/last-modified` (+POST) and **11 requests**
+  wire-identical to Express 4.22.2 via the existing differential.
+
+## 3. What the wire-diff found: HEAD was a 404
+
+The first run of the Express diff failed on `HEAD /json` — **zonix answered
+404 where Express answers the GET route with no body.** Express and Fastify
+both serve `app.get` routes for HEAD; zonix's one-tree-per-method router did
+not. Fixed in `Router.find`: when no HEAD route matches, the GET tree is
+consulted (explicit HEAD routes still win; unknown paths stay 404; zero cost
+for any other method). Three router tests added. This is the second defect the
+oracle-vs-hand-written discipline has caught in Phase 6–7 that a
+zonix-only test would have encoded as "correct".
+
+## 4. Gates
+
+- Full suite **521/521** (was 494).
+- Oracles green: etag 4/4 × 3 seeds; negotiator 16; fresh/range 6 + fuzz;
+  Express differential incl. the 11 new corpus requests.
+- **Paired hello A/B** (baseline = `c881824` dist frozen before the build):
+  **88,224 → 88,800, median of paired deltas +0.29%, range −0.4..+1.3% — ≤2%
+  PASS.** The conditional-header check is invisible to the instrument, as
+  designed.
+
+## 5. Not done
+
+Single-range 206 on `parseRange` — next session, first item, together with
+`Accept-Ranges: bytes` on `sendFile` (Express's `send` emits it by default;
+deferred here so the 206 lands with its own wire tests rather than as an
+advertised-but-unimplemented header).

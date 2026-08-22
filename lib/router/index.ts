@@ -142,7 +142,12 @@ export class Router {
     let tree = this.#methods.get(method);
     if (tree === undefined) {
       tree = this.#methods.get(method.toUpperCase());
-      if (tree === undefined) return undefined;
+      if (tree === undefined) {
+        // HEAD is answered by the GET route when no HEAD route exists, as
+        // Express and Fastify do; node:http drops the body on the wire.
+        if (method === "HEAD" || method.toUpperCase() === "HEAD") return this.find("GET", path);
+        return undefined;
+      }
     }
 
     // Fast path: no encoding to undo, no trailing slash to trim, fully static route.
@@ -166,7 +171,11 @@ export class Router {
       }
       route = walk(tree.root, segments, 0, captured);
     }
-    if (route === undefined) return undefined;
+    if (route === undefined) {
+      return method === "HEAD" && tree !== this.#methods.get("GET")
+        ? this.find("GET", path)
+        : undefined;
+    }
 
     return { params: zip(route.paramNames, captured), route };
   }

@@ -61,7 +61,19 @@ export interface ZonixOptions {
    * silently emitting an unsigned cookie.
    */
   cookieSecret?: string;
+  /**
+   * Entity tags on `send`/`json`/`sendFile` bodies, enabling 304s for
+   * conditional requests. **Off by default** (performance rule 4): on means
+   * hashing every response body. `true` or `"weak"` emits `W/"..."` tags
+   * (Express's default); `"strong"` emits strong ones; a function receives
+   * the body Buffer and returns a tag or `undefined`. Per route, use the
+   * `etag()` middleware instead.
+   */
+  etag?: EtagOption;
 }
+
+export type EtagGenerator = (body: Buffer) => string | undefined;
+export type EtagOption = boolean | "weak" | "strong" | EtagGenerator;
 
 /** `(address, hopIndex) => isTrusted`. */
 export type TrustPredicate = (address: string | undefined, hop: number) => boolean;
@@ -74,4 +86,6 @@ export interface ZonixSettings {
   subdomainOffset: number;
   /** Secret for signed cookies; signing throws when it is absent. */
   cookieSecret?: string | undefined;
+  /** Body tag generator, or undefined when ETags are off. */
+  etag?: EtagGenerator | undefined;
 }

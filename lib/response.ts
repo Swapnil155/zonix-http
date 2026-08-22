@@ -18,6 +18,7 @@ import { markSigned, sign } from "./cookies/sign.js";
 import { ErrorCode, frameworkError, wasDispatched, type ZonixError } from "./errors/index.js";
 import { settingsOf } from "./internal/constants.js";
 import { contentDisposition } from "./http/content-disposition.js";
+import { statTag } from "./http/etag.js";
 import { DEFAULT_MIME, lookupMime, resolveType } from "./http/mime.js";
 import type { ZonixRequest } from "./request.js";
 
@@ -78,6 +79,14 @@ export class ZonixResponse extends ServerResponse<ZonixRequest> {
    * @internal Wire this response to the app's central error dispatch. Called by
    * `Zonix` for every request; not part of the public API.
    */
+  /** Route-level ETag override installed by the `etag()` middleware. */
+  #etag: ((body: Buffer) => string | undefined) | undefined = undefined;
+
+  /** Install a per-response ETag generator (the `etag()` middleware does this). */
+  static setEtag(res: ZonixResponse, generator: (body: Buffer) => string | undefined): void {
+    res.#etag = generator;
+  }
+
   static attachErrorSink(res: ZonixResponse, sink: ErrorSink): void {
     res.#sink = sink;
   }
@@ -102,6 +111,7 @@ export class ZonixResponse extends ServerResponse<ZonixRequest> {
     // Buffer.byteLength was tried and measured slightly WORSE (framework
     // self-time 3.10% -> 3.39% on the hello profile), so the encode stays here.
     const body = Buffer.from(JSON.stringify(data === undefined ? null : data), "utf8");
+    if (this.#notModified(body)) return;
     if (this.hasHeader("Content-Type")) {
       // A caller-set type is kept, but the charset is forced to utf-8 because
       // that is what was just encoded. Express does the same via send(); the
@@ -409,6 +419,7 @@ export class ZonixResponse extends ServerResponse<ZonixRequest> {
 
   /** Shared tail for `send`: sets Content-Length and strips bodyless headers. */
   #finish(body: Buffer | undefined): void {
+    if (body !== undefined && this.#notModified(body)) return;
     if (isBodyless(this.statusCode)) {
       this.removeHeader("Content-Type");
       this.removeHeader("Content-Length");
@@ -533,6 +544,26 @@ export class ZonixResponse extends ServerResponse<ZonixRequest> {
       );
     }
 
+    // Validators first, as `send` does for Express: Last-Modified always, a weak
+    // stat tag when ETags are on. Then a fresh conditional GET is answered 304
+    // before a single byte of the file is read - that is the whole point of
+    // validators on a static path.
+    if (!this.hasHeader("Last-Modified"))
+      this.setHeader("Last-Modified", stats.mtime.toUTCString());
+    if ((this.#etag ?? settingsOf(this.req.socket).etag) !== undefined && !this.hasHeader("ETag")) {
+      this.setHeader("ETag", "W/" + statTag(stats));
+    }
+    if (!this.hasHeader("Content-Type")) this.setHeader("Content-Type", type);
+    const reqHeaders = this.req.headers;
+    if (
+      (reqHeaders["if-none-match"] !== undefined ||
+        reqHeaders["if-modified-since"] !== undefined) &&
+      this.req.fresh
+    ) {
+      this.#sendNotModified();
+      return;
+    }
+
     if (stats.size <= BUFFERED_MAX_BYTES) {
       const body = await readFileAsync(path);
       // Length comes from the bytes actually read, not from the earlier stat:
@@ -552,6 +583,38 @@ export class ZonixResponse extends ServerResponse<ZonixRequest> {
     // file-1mb (every paired run negative). The path is ~24% idle, so fewer,
     // larger reads buy nothing and cost more per allocation.
     await pipeline(createReadStream(path), this);
+  }
+
+  /**
+   * Conditional GET for an in-memory body, in Express's order: generate an
+   * ETag when one is enabled (route-level override, then app setting) and
+   * none is set; then, if the request carries a validator and `req.fresh`
+   * says the client's copy is good, answer 304 with no body. Returns `true`
+   * when the 304 was sent. A request with no conditional header costs two
+   * property reads here and nothing else (performance rule 1).
+   */
+  #notModified(body: Buffer): boolean {
+    const generate = this.#etag ?? settingsOf(this.req.socket).etag;
+    if (generate !== undefined && !this.hasHeader("ETag")) {
+      const tag = generate(body);
+      if (tag !== undefined) this.setHeader("ETag", tag);
+    }
+    const headers = this.req.headers;
+    if (headers["if-none-match"] === undefined && headers["if-modified-since"] === undefined) {
+      return false;
+    }
+    if (!this.req.fresh) return false;
+    this.#sendNotModified();
+    return true;
+  }
+
+  /** 304: keep the validators, drop everything that describes a body. */
+  #sendNotModified(): void {
+    this.statusCode = 304;
+    this.removeHeader("Content-Type");
+    this.removeHeader("Content-Length");
+    this.removeHeader("Transfer-Encoding");
+    this.end();
   }
 
   #assertOpen(fn: (...args: never[]) => unknown): void {

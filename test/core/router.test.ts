@@ -327,3 +327,27 @@ describe("router: params object shape", () => {
     assert.equal(({} as Record<string, unknown>).polluted, undefined);
   });
 });
+
+describe("router: HEAD falls back to GET", () => {
+  test("a GET route answers HEAD with the same headers and no body", async () => {
+    const app = makeApp();
+    app.get("/thing", (_req, res) => res.status(200).json({ big: "x".repeat(100) }));
+    const res = await request(app.server).head("/thing").expect(200);
+    assert.equal(res.headers["content-length"], "110");
+    assert.equal(res.text, undefined);
+  });
+
+  test("an explicit HEAD route wins over the GET fallback", async () => {
+    const app = makeApp();
+    app.get("/thing", (_req, res) => res.status(200).json({ via: "get" }));
+    app.route("head", "/thing", (_req, res) => res.status(204).end());
+    await request(app.server).head("/thing").expect(204);
+    await request(app.server).get("/thing").expect(200, { via: "get" });
+  });
+
+  test("HEAD on a path with no GET route is still a 404", async () => {
+    const app = makeApp();
+    app.get("/thing", echo("thing"));
+    await request(app.server).head("/other").expect(404);
+  });
+});

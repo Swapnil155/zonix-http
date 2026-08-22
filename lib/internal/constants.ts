@@ -32,6 +32,8 @@ export interface AppSettings {
   subdomainOffset: number;
   /** Secret for signed cookies. Signing throws when it is absent. */
   cookieSecret?: string | undefined;
+  /** Body tag generator; undefined = ETags off (the default). */
+  etag?: ((body: Buffer) => string | undefined) | undefined;
 }
 
 /** Settings for a request that cannot reach its app (detached socket, unit test). */
@@ -39,6 +41,7 @@ export const DEFAULT_SETTINGS: AppSettings = Object.freeze({
   trust: () => false,
   subdomainOffset: 2,
   cookieSecret: undefined,
+  etag: undefined,
 });
 
 /**
