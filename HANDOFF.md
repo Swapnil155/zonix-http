@@ -1,35 +1,29 @@
 # HANDOFF
 
-**Phase:** 7 — BUILD DONE (S21, 2026-08-22). Oracle-first, all green: negotiator +
-accepts/format (S14), fresh/range (s1), ETag + 304s (s2), 206 + Accept-Ranges +
-412/If-Range + compression() (s3), serveStatic memory cache (s4, `4421b7e`).
+**Phase:** 7 — CLOSED on the M1 verdict (S22, 2026-08-22, container). Next
+session: **Phase 8 opens** (Router class, path-mounted `use`, nesting,
+`originalUrl`/`baseUrl`, 4-arity error middleware, urlencoded/raw/text parsers,
+extended query parser + pollution/fuzz suites; exit = real Express app ported
+by changing only the import line).
 
-## Done this session (Phase 7 s4 — serveStatic cache, opt-in)
+## Done this session (M1 adjudication, container, two rows)
 
-`serveStatic(root, { cache: { maxBytes } })`, off by default: `lib/internal/
-file-cache.ts` (LRU by bytes, Map-ordered, refuses oversize); `sendFile` split
-into resolve + `#sendEntity` so `ZonixResponse.sendCached` runs the same
-412/304/206/compression wire logic over cached bytes; one stat per hit,
-mtime/size change → evict + reread; uncached path untouched. 20 tests incl.
-disconnect mid-send and **cached-vs-uncached equivalence: 36 probes × 5 paths,
-miss and hit, wire-identical.** **572/572; hello gate 86,701 → 87,494, median
-−0.09%, range −1.3..+3.3% PASS; file-1kb paired +4.99% (5/5, host degraded
-regime — reported, not claimed).** Full record: `bench/results.md` "Phase 7,
-session 4"; earlier sessions have their own sections there.
+Prereq: `ZONIX_STATIC_CACHE=1` knob in `bench/servers/zonix.js` (serveStatic
+cache over mirrored fixtures, fixed mtime); `bench/smoke-cache.mjs` 32/32
+wire-identical cache-on cold+warm vs default (host + container); matrix/smoke
+take `zonix-cache` as a framework id. Regime clean pre+post, spreads ≤4%,
+Fastify unimodal. **file-1kb: default 11,337 → 1.60× Express / 1.28× Fastify /
+1.68× cpeak; cache-on 28,603 → 4.03× / 3.24× / 4.25× (2.52× own default) —
+≥2× MET on the cache row, labeled opt-in.** file-1mb informational (cache
+1.21× own default). Default-row ratios ~10% under the post-audit matrix —
+scorecard should quote ranges (D2). Section "M1 adjudication 2026-08-22" in
+`bench/results.md`.
 
-## Next (exact)
+## Next
 
-1. **M1 two-row adjudication, container** (D8 `--cpus=8 --abort-busy`, regime
-   pre+post, fingerprint): row A zonix-default vs Express/Fastify/cpeak; row B
-   zonix-cache-on (labeled opt-in) vs the field — ≥2× applies to row B only.
-   Prereq: cache-on env knob in `bench/servers/zonix.js` (file routes use
-   `res.sendFile` today; row B needs `serveStatic` with `cache`), byte-smoke
-   before benching (`bench/smoke-servers.mjs`).
-2. Phase 7 exit test (wire-level 304/206/Content-Encoding) + phase gate.
-3. Then Phase 8 (Router class, mounting, parsers).
-
-Swapnil-side: file Express docs PR; decide on the Fastify discussion issue.
-Nothing is filed from this repo.
+Phase 8 as above (test-first, Express wire-diff), then Phase 9 (npm; README
+scorecard as ranges with both M1 rows). Swapnil-side: scorecard ranges in
+CLAUDE.md; Express docs PR; Fastify discussion decision — nothing filed here.
 
 ## Standing measurement rules
 

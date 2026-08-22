@@ -62,7 +62,15 @@ const SCENARIOS = [
     informational: true,
   },
 ];
-const ALL_FRAMEWORKS = ["zonix", "express", "fastify", "cpeak"];
+// A framework id names a server script plus the env that selects its variant.
+const FRAMEWORK_SPEC = {
+  zonix: { script: "zonix" },
+  "zonix-cache": { script: "zonix", env: { ZONIX_STATIC_CACHE: "1" } },
+  express: { script: "express" },
+  fastify: { script: "fastify" },
+  cpeak: { script: "cpeak" },
+};
+const ALL_FRAMEWORKS = Object.keys(FRAMEWORK_SPEC);
 
 const args = new Map(
   process.argv.slice(2).map((a) => {
@@ -104,9 +112,10 @@ let nextPort = 3500;
 
 function start(framework, port, scenario) {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [`bench/servers/${framework}.js`], {
+    const spec = FRAMEWORK_SPEC[framework];
+    const child = spawn(process.execPath, [`bench/servers/${spec.script}.js`], {
       cwd: root,
-      env: { ...process.env, PORT: String(port), ...(scenario.env ?? {}) },
+      env: { ...process.env, PORT: String(port), ...(spec.env ?? {}), ...(scenario.env ?? {}) },
       stdio: ["ignore", "ignore", "inherit", "ipc"],
     });
     const timer = setTimeout(() => reject(new Error(`${framework} never signalled ready`)), 20000);
@@ -210,10 +219,28 @@ for (const scenario of scenarios) {
       `${FRAMEWORKS.map((f) => spreadOf(s[f]).toFixed(1)).join(" / ")} | ${s.zonix.length} |`,
   );
 }
+if (FRAMEWORKS.includes("zonix-cache")) {
+  const field = FRAMEWORKS.filter((f) => f !== "zonix" && f !== "zonix-cache");
+  console.log("");
+  console.log("### Cache row (zonix-cache, labeled opt-in) vs the field");
+  console.log("");
+  console.log(
+    `| scenario | ${field.map((f) => `zonix-cache/${f}`).join(" | ")} | zonix-cache/zonix |`,
+  );
+  console.log(`| --- | ${field.map(() => "---:").join(" | ")} | ---: |`);
+  for (const scenario of scenarios) {
+    const s = results[scenario.id];
+    const c = median(s["zonix-cache"]);
+    console.log(
+      `| ${scenario.id} | ${field.map((f) => `${(c / median(s[f])).toFixed(2)}×`).join(" | ")} | ${(c / median(s.zonix)).toFixed(2)}× |`,
+    );
+  }
+}
 console.log("");
 console.log("### Per-round values (fastify in full; zonix alongside as the rule-9 flat control)");
 console.log("");
 const rest = FRAMEWORKS.filter((f) => f !== "fastify" && f !== "zonix");
+const fastifyIn = FRAMEWORKS.includes("fastify");
 console.log(
   `| scenario | fastify rounds | fastify split | zonix rounds | ${rest.map((f) => `${f} rounds`).join(" | ")} |`,
 );
@@ -222,13 +249,17 @@ for (const scenario of scenarios) {
   const s = results[scenario.id];
   // A fast-band process sits well above the common band: 1.25x the minimum is
   // far beyond the ~5% noise floor and well under the ~1.55x mode gap.
-  const floor = Math.min(...s.fastify) * 1.25;
-  const fast = s.fastify.filter((x) => x > floor).length;
-  const split =
-    fast === 0 ? "unimodal" : `**BIMODAL: ${fast} fast / ${s.fastify.length - fast} common**`;
+  const fastifyRounds = fastifyIn ? s.fastify : [];
+  const floor = fastifyIn ? Math.min(...fastifyRounds) * 1.25 : Infinity;
+  const fast = fastifyRounds.filter((x) => x > floor).length;
+  const split = !fastifyIn
+    ? "-"
+    : fast === 0
+      ? "unimodal"
+      : `**BIMODAL: ${fast} fast / ${fastifyRounds.length - fast} common**`;
   const mark = (xs) => xs.map((x) => (x > floor ? `**${fmt(x)}**` : fmt(x))).join(", ");
   console.log(
-    `| ${scenario.id} | ${mark(s.fastify)} | ${split} | ${s.zonix.map(fmt).join(", ")} | ${rest.map((f) => s[f].map(fmt).join(", ")).join(" | ")} |`,
+    `| ${scenario.id} | ${fastifyIn ? mark(fastifyRounds) : "-"} | ${split} | ${s.zonix.map(fmt).join(", ")} | ${rest.map((f) => s[f].map(fmt).join(", ")).join(" | ")} |`,
   );
 }
 console.log("");

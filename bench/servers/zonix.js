@@ -5,11 +5,13 @@ import { scaleRoutes } from "./shared.mjs";
 
 // ZONIX_ENTRY lets bench/ab.mjs point this same server at two different builds
 // so a candidate can be measured against its baseline in one session.
-const { default: zonix, parseJSON } = await import(
-  process.env.ZONIX_ENTRY ?? "../../dist/index.js"
-);
+const {
+  default: zonix,
+  parseJSON,
+  serveStatic,
+} = await import(process.env.ZONIX_ENTRY ?? "../../dist/index.js");
 
-const { SMALL, LARGE } = ensureFixtures();
+const { SMALL, LARGE, STATIC_ROOT } = ensureFixtures();
 
 const app = zonix({ dev: false });
 
@@ -30,8 +32,21 @@ app.get("/chain", ...chain, (req, res) => {
   res.json({ ok: true });
 });
 
-app.get("/file/small", (req, res) => res.sendFile(SMALL));
-app.get("/file/large", (req, res) => res.sendFile(LARGE));
+// ZONIX_STATIC_CACHE=1 is the M1 "cache-on" row (labeled opt-in): the same
+// bytes, same Content-Type and same Last-Modified, served through
+// `serveStatic({ cache })` sized to hold both fixtures. Default row: sendFile.
+if (process.env.ZONIX_STATIC_CACHE) {
+  const cached = serveStatic(STATIC_ROOT, { cache: { maxBytes: 4 * 1024 * 1024 } });
+  const asText = (req, res, next) => {
+    res.setHeader("Content-Type", "text/plain; charset=utf-8");
+    next();
+  };
+  app.get("/file/small", asText, cached);
+  app.get("/file/large", asText, cached);
+} else {
+  app.get("/file/small", (req, res) => res.sendFile(SMALL));
+  app.get("/file/large", (req, res) => res.sendFile(LARGE));
+}
 
 // Body parsing is route-level, never global: a global would take every other
 // route off the no-middleware fast path and quietly change their numbers.

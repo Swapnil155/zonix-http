@@ -1955,3 +1955,62 @@ Next: **M1 two-row adjudication in the container** — zonix-default vs the
 field, and zonix-cache-on (labeled opt-in) vs the field; the ≥2× target
 applies to the cache row. `bench/servers/zonix.js` needs a cache-on variant
 (env knob) for that row.
+
+---
+
+# M1 adjudication 2026-08-22 (container) — two zonix rows vs the field
+
+_Phase 7 exit measurement. Container D8 (`--cpus=8 --abort-busy`, repo copied
+in), host 4.9% quiet, regime CLEAN pre (274,765 opens/sec, 10.2×) and post
+(234,120 opens/sec, 15.1×) — no flip. Five servers, rotating order, 5 rounds,
+1 warmup (2 s) + 5 s measured per process, medians; every spread ≤ 4.0%, so no
+round extended. Fastify unimodal in both scenarios._
+
+**Prerequisite, passed before any number:** `ZONIX_STATIC_CACHE=1` in
+`bench/servers/zonix.js` serves the same bytes through `serveStatic(STATIC_ROOT,
+{ cache: { maxBytes: 4 MB } })` (fixtures mirrored as `file/small`,
+`file/large`, fixed mtime). `bench/smoke-cache.mjs`: **32/32 responses
+wire-identical** (status line, every header but Date, body) cache-on cold AND
+warm vs default, on host and in the container; `smoke-servers.mjs` SMOKE OK
+across all five.
+
+### Table (container, same-session; ratios are the claim)
+
+| scenario                 | zonix rps | zonix-cache rps | express rps | fastify rps | cpeak rps | zonix/express | zonix/fastify | zonix/cpeak |        spread% (z/zc/e/f/c) | rounds |
+| ------------------------ | --------: | --------------: | ----------: | ----------: | --------: | ------------: | ------------: | ----------: | --------------------------: | -----: |
+| file-1kb                 |    11,337 |          28,603 |       7,093 |       8,839 |     6,737 |         1.60× |         1.28× |       1.68× | 3.9 / 3.1 / 2.1 / 4.0 / 3.9 |      5 |
+| file-1mb (informational) |     1,485 |           1,797 |       1,318 |       1,564 |     1,432 |         1.13× |         0.95× |       1.04× | 3.3 / 1.3 / 1.7 / 2.9 / 3.1 |      5 |
+
+### Cache row (zonix-cache, labeled opt-in) vs the field
+
+| scenario                 | zonix-cache/express | zonix-cache/fastify | zonix-cache/cpeak | zonix-cache/zonix-default |
+| ------------------------ | ------------------: | ------------------: | ----------------: | ------------------------: |
+| file-1kb                 |           **4.03×** |           **3.24×** |         **4.25×** |                     2.52× |
+| file-1mb (informational) |               1.36× |               1.15× |             1.26× |                     1.21× |
+
+### Per-round values
+
+| scenario | zonix                                  | zonix-cache                            | express                           | fastify (unimodal)                | cpeak                             |
+| -------- | -------------------------------------- | -------------------------------------- | --------------------------------- | --------------------------------- | --------------------------------- |
+| file-1kb | 11,337, 10,994, 11,065, 11,439, 11,393 | 29,317, 28,987, 28,434, 28,494, 28,603 | 7,230, 7,215, 7,078, 7,093, 7,088 | 9,034, 8,743, 8,683, 8,839, 8,954 | 6,737, 6,511, 6,774, 6,709, 6,764 |
+| file-1mb | 1,505, 1,485, 1,492, 1,473, 1,455      | 1,800, 1,814, 1,797, 1,794, 1,792      | 1,316, 1,320, 1,299, 1,318, 1,321 | 1,564, 1,556, 1,563, 1,602, 1,572 | 1,452, 1,407, 1,421, 1,432, 1,444 |
+
+Fingerprint: linux 6.6.87.2-microsoft-standard-WSL2, node v22.20.0, cwd /zonix,
+tmp /tmp, exe /usr/local/bin/node, cpus=8.
+
+### Verdict
+
+- **Cache row: ≥2× MET** against every member of the field on file-1kb —
+  4.03× Express, 3.24× Fastify, 4.25× cpeak (and 2.52× zonix's own default).
+  Published as _opt-in_ (`serveStatic(root, { cache: { maxBytes } })`), never
+  as the default number. Warm steady state is the claim (1 warmup); the hit
+  path is one `stat()` + buffered send, so the 1 MB row gains only 1.21× —
+  the copy dominates, as expected and as labeled informational.
+- **Default row stands on its own:** 1.60× Express, 1.28× Fastify, 1.68× cpeak
+  on file-1kb; file-1mb 1.13× / 0.95× / 1.04× (informational). This session's
+  default-row ratios sit ~10% under the 2026-08-22 post-audit matrix (1.76× /
+  1.43× / 1.84×) — both same-session interleaved, both valid; the scorecard
+  should quote the range (Express 1.60–1.76×, Fastify 1.28–1.43×, cpeak
+  1.68–1.84×) per D2, not either session alone. No ≥2× move anywhere (rule 6
+  not triggered).
+- Phase 7 closes on this verdict.

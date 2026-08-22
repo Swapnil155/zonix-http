@@ -15,7 +15,21 @@ const args = new Map(
     return [k, v ?? "true"];
   }),
 );
+// A framework id names a server script plus the env that selects its variant.
+const FRAMEWORK_SPEC = {
+  zonix: { script: "zonix" },
+  "zonix-cache": { script: "zonix", env: { ZONIX_STATIC_CACHE: "1" } },
+  express: { script: "express" },
+  fastify: { script: "fastify" },
+  cpeak: { script: "cpeak" },
+};
 const FRAMEWORKS = (args.get("frameworks") ?? "zonix,express,fastify,cpeak").split(",");
+for (const f of FRAMEWORKS) {
+  if (!FRAMEWORK_SPEC[f]) {
+    console.error(`Unknown framework ${f}`);
+    process.exit(1);
+  }
+}
 
 const PROBES = [
   { id: "hello", path: "/" },
@@ -38,9 +52,10 @@ let nextPort = 3700;
 function start(framework, env) {
   return new Promise((resolve, reject) => {
     const port = nextPort++;
-    const child = spawn(process.execPath, [`bench/servers/${framework}.js`], {
+    const spec = FRAMEWORK_SPEC[framework];
+    const child = spawn(process.execPath, [`bench/servers/${spec.script}.js`], {
       cwd: root,
-      env: { ...process.env, PORT: String(port), ...env },
+      env: { ...process.env, PORT: String(port), ...(spec.env ?? {}), ...env },
       stdio: ["ignore", "ignore", "inherit", "ipc"],
     });
     const timer = setTimeout(() => reject(new Error(`${framework} never signalled ready`)), 20000);
