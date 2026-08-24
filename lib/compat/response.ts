@@ -41,24 +41,66 @@ const UTF8_TYPES = /^text\/|^application\/(javascript|json)/i;
 function hasControlCharacter(value: string): boolean {
   for (let i = 0; i < value.length; i++) {
     const c = value.charCodeAt(i);
-    if (c === 0x0d /* CR */ || c === 0x0a /* LF */ || c === 0x00 /* NUL */) return true;
+    // Any C0 control (0x00-0x1F) except HTAB, plus DEL (0x7F). This is Node's own
+    // header-value rule, applied one layer up so CRLF and every other control -
+    // not just CR/LF/NUL - is rejected with a framework error before it can reach
+    // a second response line (CWE-93/CWE-113).
+    if ((c < 0x20 && c !== 0x09) || c === 0x7f) return true;
   }
   return false;
 }
 
 /**
- * Reject a header value that could split the response.
+ * A valid RFC 7230 header field-name is one or more token characters. A name
+ * carrying CR/LF/NUL (or any non-token byte) could split the response just as a
+ * value could, so the choke-point validates the name too.
+ */
+function isValidFieldName(name: string): boolean {
+  if (name.length === 0) return false;
+  for (let i = 0; i < name.length; i++) {
+    const c = name.charCodeAt(i);
+    // tchar: DIGIT / ALPHA / one of !#$%&'*+-.^_`|~
+    const ok =
+      (c >= 0x30 && c <= 0x39) ||
+      (c >= 0x41 && c <= 0x5a) ||
+      (c >= 0x61 && c <= 0x7a) ||
+      c === 0x21 ||
+      (c >= 0x23 && c <= 0x27) ||
+      c === 0x2a ||
+      c === 0x2b ||
+      c === 0x2d ||
+      c === 0x2e ||
+      c === 0x5e ||
+      c === 0x5f ||
+      c === 0x60 ||
+      c === 0x7c ||
+      c === 0x7e;
+    if (!ok) return false;
+  }
+  return true;
+}
+
+/**
+ * Reject a header name or value that could split the response.
  *
- * @throws when the value contains CR, LF or NUL.
+ * @throws when the name is not a valid field-name, or the value contains any
+ * control character (CR/LF/NUL and every other C0 control except HTAB, plus DEL).
  */
 export function assertHeaderValue(
   field: string,
   value: string,
   fn: (...a: never[]) => unknown,
 ): void {
+  if (!isValidFieldName(field)) {
+    throw frameworkError(
+      `Header name ${JSON.stringify(field)} is not a valid HTTP field-name`,
+      fn,
+      ErrorCode.INVALID_ARGUMENT,
+    );
+  }
   if (hasControlCharacter(value)) {
     throw frameworkError(
-      `Header ${JSON.stringify(field)} cannot contain CR, LF or NUL`,
+      `Header ${JSON.stringify(field)} cannot contain control characters`,
       fn,
       ErrorCode.INVALID_ARGUMENT,
     );

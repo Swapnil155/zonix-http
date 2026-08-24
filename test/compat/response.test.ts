@@ -283,7 +283,7 @@ describe("trap: CRLF injection", () => {
     app.handleErr((err, _req, res) => res.status(500).json({ message: err.message }));
 
     const res = await request(app.server).get("/x").expect(500);
-    assert.match(String(res.body.message), /CR, LF or NUL/);
+    assert.match(String(res.body.message), /control character/);
     assert.equal(res.headers["x-injected"], undefined);
   });
 
