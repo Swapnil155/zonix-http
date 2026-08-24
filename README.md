@@ -384,8 +384,23 @@ numbers said no — recorded so they don't come back:
 
 ## Security
 
+Secure by default, hardened by configuration. Static serving is symlink-safe
+(`realpath`-validated against the root), route params reject NUL bytes, header
+writes reject control characters and invalid names, and the server pins safe
+slow-client timeouts (`headersTimeout`/`requestTimeout`/`keepAliveTimeout`, all
+configurable). Add a baseline of response headers with the opt-in middleware:
+
+```ts
+import zonix, { securityHeaders } from "zonix-http";
+
+const app = zonix({ trustProxy: "loopback" }); // only behind a proxy you control
+app.use(securityHeaders({ contentSecurityPolicy: "default-src 'self'" }));
+```
+
 See [SECURITY.md](./SECURITY.md) for the disclosure process, threat model,
-and the guard-by-guard list with the test file that enforces each one.
+deployment guidance, and the guard-by-guard list with the test that enforces
+each one, and [`docs/security/audit-report.md`](./docs/security/audit-report.md)
+for the full source-level audit (findings ZH-001…ZH-029) and verdict.
 
 ## License
 

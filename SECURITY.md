@@ -58,8 +58,13 @@ the suite.
   10,000-input fuzz loop with a linear-time cap in `test/fuzz/query.fuzz.ts`].
 - Character sets outside UTF-8 / Latin-1 / ASCII / UTF-16LE are a 415 before
   the body is read; no transcoding library is ever loaded.
-- Header size, header timeout and request timeout are Node's own
-  (`maxHeaderSize`, `headersTimeout`, `requestTimeout`) and are not overridden.
+- Header size is Node's own `maxHeaderSize`. Slow-client timeouts are **pinned
+  to safe, version-stable defaults** and are configurable: `headersTimeout`
+  60s, `requestTimeout` 300s, `keepAliveTimeout` 5s (each overridable via
+  `zonix({ headersTimeout, requestTimeout, keepAliveTimeout })`; `0` disables).
+  This bounds the slow-header, slow-body and idle-keep-alive slowloris
+  dimensions regardless of the Node version's own defaults
+  [`test/security/request-timeout.test.ts`].
 
 ### Oversized bodies are answered, never reset
 
@@ -77,10 +82,15 @@ framework-generated error response carries `Connection: close`
 `serveStatic` decodes the path, rejects NUL bytes (403), **resolves first and
 then proves the result is still inside the root** — so `..`, percent-encoded
 and double-encoded forms, and backslash separators are all caught by the same
-check (403). Dotfile segments (`.env`, `.git/config`) fall through to the next
-handler by default; `dotfiles: "allow"` is the explicit opt-in. Malformed
-percent-encoding in a route path is a 400 [`test/middleware/serve-static.test.ts`,
-`test/core/router.test.ts`].
+check (403). It then **`realpath`-validates the actual file against the real
+root**, so a symlink (or Windows junction) inside the root that points outside
+it can never leak a file: the escaped path is a 403, not the target's contents
+(CWE-59) [`test/security/static-symlink.test.ts`]. Dotfile segments (`.env`,
+`.git/config`) fall through to the next handler by default; `dotfiles: "allow"`
+is the explicit opt-in. Malformed percent-encoding in a route path is a 400,
+and a **NUL byte (`%00`) in any decoded route param is a 400** so it can never
+truncate a downstream filesystem operation (CWE-158)
+[`test/middleware/serve-static.test.ts`, `test/security/router-security.test.ts`].
 
 ### Prototype pollution
 
@@ -98,9 +108,11 @@ percent-encoding in a route path is a 400 [`test/middleware/serve-static.test.ts
 
 ### Header injection / CRLF
 
-- `res.set`, `res.append` and every helper built on them reject values
-  containing CR, LF or NUL before they reach `node:http`
-  [`test/compat/response.test.ts`: "CRLF in the value cannot inject a header"].
+- `res.set`, `res.append` and every helper built on them reject **any control
+  character** (CR/LF/NUL and every other C0 control except HTAB, plus DEL) in
+  header values, and reject a header **name** that is not a valid RFC 7230
+  token, before they reach `node:http`
+  [`test/security/header-injection.test.ts`, `test/compat/response.test.ts`].
 - `res.location` / `res.redirect` percent-encode CRLF instead of splitting the
   response.
 - Cookie names, values, paths and domains are validated against the
@@ -116,6 +128,33 @@ No `eval`, no `new Function`, no generated code; no regular expression with
 nested quantifiers. Accept-* negotiation, ranges, ETags, cookies and query
 strings are all linear scanners, each differentially tested against the
 original package it replaces.
+
+### Opt-in security headers
+
+`securityHeaders()` sets `X-Content-Type-Options: nosniff`, `Referrer-Policy:
+strict-origin-when-cross-origin` and `X-Frame-Options: DENY` on every response,
+and — only when you give them a value — `Content-Security-Policy`,
+`Strict-Transport-Security` (never on plaintext) and `Permissions-Policy`.
+Nothing auto-enables that could break a working app
+[`test/security/security-headers.test.ts`].
+
+## Deployment guidance (secure by default, hardened by configuration)
+
+- **Trust proxy** is **off by default** — turn it on (`zonix({ trustProxy })`)
+  only behind a reverse proxy/LB you control, and prefer the narrowest form (a
+  hop count or specific CIDR) over `true`. Misuse makes `req.ip`,
+  HTTPS detection, and any IP-based logic spoofable.
+- **Session cookies:** `res.cookie(name, v, { httpOnly: true, secure: true, sameSite: "lax", signed: true })`
+  with a strong `cookieSecret`.
+- **Redirects to user-supplied URLs:** validate the destination in your handler
+  (allowlist / same-origin). zonix redirects where you tell it and neutralizes
+  CRLF, but does not decide whether a destination is safe (CWE-601).
+- **TLS:** terminate at a proxy or wrap with `node:https`; keep (or tighten) the
+  pinned slow-client timeouts for direct-internet exposure.
+- Add `app.use(securityHeaders())` with a `Content-Security-Policy` for your app.
+
+The full source-level audit — findings ZH-001…ZH-029, fixes, and the verdict —
+is in [`docs/security/audit-report.md`](docs/security/audit-report.md).
 
 ## Disclosure practice
 

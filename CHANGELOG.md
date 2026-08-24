@@ -4,6 +4,40 @@ All notable changes to `zonix-http`. Format follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 [SemVer](https://semver.org/) (0.x: minor may break).
 
+## [Unreleased] — security audit & hardening
+
+Source-level security audit (findings ZH-001…ZH-029; full report in
+`docs/security/audit-report.md`). Verdict: **APPROVED WITH CONDITIONS**.
+
+### Security
+
+- **Static symlink escape fixed (ZH-001, Critical, CWE-59):** `serveStatic` now
+  `realpath`-validates every served file (direct, cache, and index paths)
+  against the real root, so a symlink/junction inside the root pointing outside
+  it returns 403 instead of leaking the target. Adds one `realpath` per served
+  file.
+- **Route-param null byte rejected (ZH-020, High, CWE-158):** a `%00` in a
+  decoded path segment is now a 400 instead of reaching handlers as a literal
+  NUL.
+- **Slow-client timeouts pinned & configurable (ZH-004, CWE-400):** version-
+  stable `headersTimeout` (60s), `requestTimeout` (300s), `keepAliveTimeout`
+  (5s), each overridable via `ZonixOptions` (0 disables).
+- **Header choke-point hardened (ZH-007, CWE-93/113):** `assertHeaderValue`
+  now rejects all control characters (not just CR/LF/NUL) in values and
+  validates the header name as an RFC 7230 token.
+- **New opt-in `securityHeaders()` middleware (ZH-022):** safe defaults
+  (nosniff, Referrer-Policy, X-Frame-Options: DENY) on; CSP/HSTS/
+  Permissions-Policy off until configured; HSTS never on plaintext.
+- Added `test/security/` — 16 files, 78 regression tests covering every
+  confirmed vulnerability and verified-safe finding.
+
+### Verified safe (no code change, regression-locked)
+
+Request smuggling, prototype pollution across all parsers, body-size
+exhaustion, query-parser limits, host-header trust, ReDoS, proxy trust, cookie
+security, error non-disclosure, and HTTP-method handling were each audited and
+confirmed safe, with regression tests added.
+
 ## [0.2.0] — 2026-08-24
 
 ### Added
