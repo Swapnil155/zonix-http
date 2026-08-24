@@ -1,30 +1,32 @@
 # HANDOFF
 
-**Phase 9 CLOSED (S30): zonix-http live on npm** (provenance; CI green on
-GitHub runners Node 20/22/24; install-from-registry smoke passed). README +
-SECURITY.md shipped, scorecard as neutral measurements (filings prereq
-dropped by Swapnil); numbers verbatim from results.md. Details: git log.
+**Security audit COMPLETE (S33, 2026-08-25). Verdict: APPROVED WITH CONDITIONS.**
+Executed SECURITY_AUDIT.md phases 0-6, ZH-001..029, one commit per finding.
+Full report: `docs/security/audit-report.md`.
 
-**S31:** 0.1.1 + 0.1.2; release auth = OIDC Trusted Publishing. 2FA on.
+## Fixed (confirmed vulns + hardening)
 
-**S32: 0.2.0 features BUILT (`5d75a26`), suite 940/940.** req.signedCookies
-(cookie-parser@1.4.7 oracle 25/25 incl 2k fuzz; deviations: **proto**-named
-cookie kept as inert null-proto data vs oracle drops; empty name dropped vs
-oracle keeps; rotation arrays; j: revival both maps) + serveStatic
-maxAge/immutable (send wire format, express.static diff, rides 304/206/cache
-paths, off unless set) + CHANGELOG.md + gh-release step in release.yml
-(contents: write). README guide updated. **v0.2.0 SHIPPED (S32):** gate
-first-run VOIDED (spread 20.2%), valid rerun PASS -0.55% (spreads 1.4/2.4)
-vs a v0.1.2-worktree baseline — record in results.md "0.2.0 gate"; OIDC
-publish green; first auto GitHub Release (v0.2.0) created.
+- **ZH-001 Critical (CWE-59):** serveStatic symlink escape — realpath-validate
+  every served file (direct/cache/index) vs the real root. `7d07666`
+- **ZH-020 High (CWE-158):** `%00` in route param → 400 (was literal NUL to
+  handlers). `bc560a2`
+- **ZH-004 High (CWE-400):** pinned configurable timeouts headers/request/
+  keepAlive (60s/300s/5s, 0 disables). `00a9dde`
+- **ZH-007 High hardening:** assertHeaderValue now rejects all control chars +
+  validates header names (RFC 7230 token). `a110705`
+- **ZH-022 hardening:** new opt-in `securityHeaders()` middleware. `20bac9c`
 
-## Open items (Swapnil)
+## Verified safe (regression-locked, no code change)
 
-1. **Pick the dogfood service** — the v1.0.0 clock started today.
-2. Revoke the now-unused broad npm token (npm Settings → Access Tokens),
-   delete the NPM_TOKEN GitHub secret, and on the package's npm Settings
-   select "Require 2FA and disallow bypass 2fa tokens (recommended)".
-3. Upstream filings (Express docs PR, Fastify discussion) remain DRAFTED,
-   NOT filed — only needed if the README ever adds mechanism claims (W2).
+ZH-002 smuggling, ZH-003/006 proto-pollution, ZH-005 body exhaustion, ZH-008
+host, ZH-009 routing, ZH-010 ReDoS, ZH-013 proxy, ZH-014 redirect (app duty),
+ZH-015 compression, ZH-016 cookies, ZH-017 errors, ZH-018 methods, ZH-019
+limits. N/A: ZH-011 multipart, ZH-012 ws, ZH-023 TLS (all absent, documented).
 
-**Next session: open with the dogfood service's first friction list.**
+## State
+
+Suite **1017 pass / 1 skip / 0 fail** (was 940). tsc clean. npm audit --omit=dev
+0 vulns. 0 runtime deps. `test/security/` = 16 files, 78 tests. Docs: SECURITY.md
+updated, README security section, CHANGELOG [Unreleased]. Branch: master, all
+committed. **Next: cut 0.3.0** (audit fixes + signed-cookie/static from 0.2.x
+follow-ons) when ready.
