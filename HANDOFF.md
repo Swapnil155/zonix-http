@@ -1,29 +1,31 @@
 # HANDOFF
 
-**Phase:** 9 — s2 + s3-local DONE (S30, 2026-08-24). SECURITY.md + README
-shipped. **Filings prereq dropped by Swapnil (S29, his call):** README shows
-scorecard ratios neutrally — no Fastify-mechanism/W2 claim; footnote says
-workload/harness-specific, rerun on yours; 0.91–0.98× losses printed plainly.
-Gates: every README number verbatim in results.md; 13/13 SECURITY.md
-test-cites resolve; quick-start snippet run live; Prettier clean.
+**Phase 9 CLOSED (S30, 2026-08-24): `zonix-http@0.1.0` IS LIVE ON NPM,**
+published by release.yml with provenance (attestations URL on the registry).
+Repo public at github.com/Swapnil155/Zonix-http (capital Z — rename to
+lowercase optional; GitHub redirects, provenance passed as-is). CI green on
+GitHub's own runners (Node 20/22/24 + coverage + pack smoke) — first-party
+proof of the three-Node claim. First Release run failed at Publish (token or
+case, log needed auth; Swapnil changed something browser-side), tag re-push
+succeeded. Verified post-publish: registry shows 0.1.0, dist 6 files,
+attestations present; fresh install from the PUBLIC registry in an empty
+project served 200 on a route (install smoke, this machine).
 
-Name **`zonix-http` CONFIRMED** (S30 "go ahead"; `@zonix` scope TAKEN on npm —
-user "zonix" exists; uppercase names invalid). **Release battery green on this
-tree (S30):** typecheck/build/format 0, suite 894/894, coverage lib/
-98.86/93.72/97.77 thresholds pass, PACK SMOKE OK zonix-http@0.1.0. This is
-the same battery release.yml runs on the tag.
+S29–S30 also: SECURITY.md + README shipped (filings prereq dropped by
+Swapnil — scorecard shown as neutral measurements, no W2 mechanism claim,
+losses printed plainly; all numbers verbatim from results.md; 13/13
+SECURITY.md test-cites resolve; quick-start run live). Spec committed
+(CLAUDE.md + HISTORY.md now tracked). repository/bugs/homepage fields added.
 
-## Remaining = Swapnil's launch sequence (nothing left for Claude Code)
+## Open items (Swapnil)
 
-1. `git add CLAUDE.md HISTORY.md && git commit` (spec still uncommitted).
-2. Create the GitHub repo; `git remote add origin <url> && git push -u origin
-master` — first push runs the real CI matrix.
-3. Repo settings: add `NPM_TOKEN` secret; set repo VARIABLE
-   `PUBLISH_ENABLED=true`; enable private vulnerability reporting.
-4. Add `repository`/`bugs`/`homepage` to package.json, commit, push.
-5. `git tag v0.1.0 && git push origin v0.1.0` — release.yml checks
-   tag==version, dry-runs, then publishes with provenance.
-6. After publish: pick the dogfood service (v1.0.0 clock starts).
+1. **Pick the dogfood service** — the v1.0.0 clock started today.
+2. Optional: rename repo to lowercase `zonix-http`; rotate the npm token
+   (it was broad: all-packages read-write, 2FA-bypass) for a
+   package-scoped one now that the package exists; enable private
+   vulnerability reporting if not done.
+3. Upstream filings (Express docs PR, Fastify discussion) remain DRAFTED,
+   NOT filed — only needed if the README ever adds mechanism claims (W2).
 
-If any release.yml step fails on GitHub, open the next session with the log;
-nothing publishes until PUBLISH_ENABLED is set, so a failed run is free.
+**Next session (v0.2.0 track or maintenance): open with the dogfood
+service's first friction list.**
