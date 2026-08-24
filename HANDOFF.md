@@ -6,7 +6,11 @@ the scorecard ratios neutrally — no Fastify-mechanism/W2 claim, footnote says
 "workload/harness-specific, rerun on yours" and prints the 0.91–0.98× losses
 plainly. Gates: every README number verbatim in results.md; all 13 SECURITY.md
 test-cites resolve; quick-start run live; Prettier clean. `@zonix` scope
-TAKEN on npm; name still `zonix-http` pending his word. **Next: s3 — 0.1.0.**
+TAKEN on npm; name `zonix-http` CONFIRMED (S30 "go ahead"). **s3 local half
+DONE (S30): release battery green on this tree** — typecheck/build/format 0,
+894/894, coverage 98.86/93.72/97.77 thresholds pass, PACK SMOKE OK
+zonix-http@0.1.0. Remaining = Swapnil's push sequence (below), then tag
+v0.1.0 → release.yml publishes with provenance.
 
 ## Done this session (Phase 9 s1)
 
