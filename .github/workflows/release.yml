@@ -2,12 +2,14 @@ name: Release
 
 # Tag `vX.Y.Z` -> build -> full suite -> `npm publish --provenance`.
 #
-# Publishing is DISABLED until 0.1.0 is cut deliberately: the dry-run step
-# always runs (so the tarball, provenance wiring and registry auth are
-# exercised on every tag), the real publish runs only when the repository
-# variable PUBLISH_ENABLED is set to "true". Flip it in Settings -> Secrets
-# and variables -> Actions -> Variables when 0.1.0 is ready; the tag must
-# also match package.json's version.
+# Auth is OIDC Trusted Publishing (configured on npmjs.com for this repo +
+# this workflow file): npm mints a short-lived credential from the job's
+# OIDC token, so no NPM_TOKEN secret is needed or used. Requires npm >= 11.5.1
+# (the runner's bundled npm is older, hence the npm upgrade step).
+#
+# The dry-run step always runs (tarball + provenance wiring exercised on
+# every tag); the real publish additionally requires the repository variable
+# PUBLISH_ENABLED == "true" and a tag matching package.json's version.
 
 on:
   push:
@@ -27,6 +29,7 @@ jobs:
           node-version: 22
           registry-url: https://registry.npmjs.org
           cache: npm
+      - run: npm install -g npm@latest # OIDC trusted publishing needs npm >= 11.5.1
       - run: npm ci
       - run: npm run typecheck
       - run: npm run build
@@ -43,11 +46,7 @@ jobs:
 
       - name: Publish (dry run, always)
         run: npm publish --provenance --access public --dry-run
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish
         if: vars.PUBLISH_ENABLED == 'true'
         run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
