@@ -45,6 +45,7 @@ export {
 } from "./cookies/parse.js";
 export { createSerializer, escapeString, type Schema, type Serializer } from "./http/serialize.js";
 export { cors, type CorsOptions, type OriginResolver } from "./middleware/cors.js";
+export { securityHeaders, type SecurityHeadersOptions } from "./middleware/security-headers.js";
 export { serveStatic, type ServeStaticOptions } from "./middleware/serve-static.js";
 
 export { ErrorCode, frameworkError, isClientDisconnect, type ZonixError } from "./errors/index.js";
