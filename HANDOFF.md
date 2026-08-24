@@ -15,8 +15,10 @@ cookie kept as inert null-proto data vs oracle drops; empty name dropped vs
 oracle keeps; rotation arrays; j: revival both maps) + serveStatic
 maxAge/immutable (send wire format, express.static diff, rides 304/206/cache
 paths, off unless set) + CHANGELOG.md + gh-release step in release.yml
-(contents: write). README guide updated. **Before cutting v0.2.0: paired
-hello gate on a quiet host (rule 2), then npm version minor + tag.**
+(contents: write). README guide updated. **v0.2.0 SHIPPED (S32):** gate
+first-run VOIDED (spread 20.2%), valid rerun PASS -0.55% (spreads 1.4/2.4)
+vs a v0.1.2-worktree baseline — record in results.md "0.2.0 gate"; OIDC
+publish green; first auto GitHub Release (v0.2.0) created.
 
 ## Open items (Swapnil)
 
