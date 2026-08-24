@@ -100,6 +100,27 @@ export interface ZonixOptions {
    * `"simple"`.
    */
   queryParser?: QueryParserOption;
+  /**
+   * Slowloris / slow-client hardening (CWE-400). These are applied to the
+   * underlying `http.Server` and pin safe timeouts regardless of the Node
+   * version's own defaults (older Node had no `requestTimeout` and a shorter
+   * `headersTimeout`). All values are milliseconds; `0` disables a timeout.
+   *
+   * Defaults, chosen for a general-purpose server that may face the public
+   * internet directly:
+   * - `headersTimeout` **60000** — a client has 60s to send all request
+   *   headers, or the socket is closed (slow-header slowloris).
+   * - `requestTimeout` **300000** — a client has 5 minutes to send the whole
+   *   request, or it is aborted with 408 (slow-body slowloris).
+   * - `keepAliveTimeout` **5000** — an idle keep-alive socket is closed after
+   *   5s, freeing the connection.
+   *
+   * Behind a trusted reverse proxy that already enforces these, override as you
+   * see fit. `requestTimeout` must be `0` or `>= headersTimeout` (Node's rule).
+   */
+  headersTimeout?: number;
+  requestTimeout?: number;
+  keepAliveTimeout?: number;
 }
 
 export type EtagGenerator = (body: Buffer) => string | undefined;

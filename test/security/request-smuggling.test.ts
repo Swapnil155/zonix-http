@@ -52,7 +52,6 @@ describe("ZH-002 request smuggling / framing ambiguity", () => {
   before(async () => {
     const a = makeApp();
     hits = [];
-    a.use(a.json?.() ?? ((_q, _s, n) => n()));
     a.post("/", (req, res) => {
       hits.push(req.url ?? "");
       res.json({ ok: true });

@@ -31,6 +31,26 @@ import type {
 
 const METHODS: readonly HttpMethod[] = ["get", "post", "put", "patch", "delete", "head", "options"];
 
+/**
+ * Set one of the server's slow-client timeouts (ZH-004). Uses the caller's value
+ * when given (validated non-negative; 0 disables), otherwise the safe default.
+ */
+function applyTimeout(
+  server: Record<"headersTimeout" | "requestTimeout" | "keepAliveTimeout", number>,
+  field: "headersTimeout" | "requestTimeout" | "keepAliveTimeout",
+  value: number | undefined,
+  fallback: number,
+): void {
+  if (value !== undefined && (!Number.isFinite(value) || value < 0)) {
+    throw frameworkError(
+      `${field} must be a non-negative number of milliseconds, received ${String(value)}`,
+      zonix,
+      ErrorCode.INVALID_ARGUMENT,
+    );
+  }
+  server[field] = value ?? fallback;
+}
+
 /** The application. Create one with the default export: `const app = zonix()`. */
 export class Zonix {
   /** Escape hatch to the underlying `http.Server`. */
@@ -104,6 +124,11 @@ export class Zonix {
       },
     );
     (this.server as unknown as Record<symbol, ZonixSettings>)[kSettings] = settings;
+    // Slowloris / slow-client hardening (ZH-004). Pin safe timeouts regardless of
+    // the Node version's own defaults; each is overridable, 0 disables.
+    applyTimeout(this.server, "headersTimeout", options.headersTimeout, 60_000);
+    applyTimeout(this.server, "requestTimeout", options.requestTimeout, 300_000);
+    applyTimeout(this.server, "keepAliveTimeout", options.keepAliveTimeout, 5_000);
     this.#settings = settings;
     this.#store.set("trust proxy", options.trustProxy ?? false);
     this.#store.set("etag", options.etag ?? false);
