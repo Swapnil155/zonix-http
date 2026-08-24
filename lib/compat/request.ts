@@ -264,7 +264,24 @@ function hasBody(headers: IncomingHttpHeaders): boolean {
 }
 
 /**
- * Lowercased `type/subtype`, parameters dropped.
+ * The normalized `type/subtype[+suffix]` a request declares, parameters dropped
+ * — or `undefined` if the content-type is not well-formed.
+ *
+ * This is a faithful port of what `type-is` does to the *actual* header:
+ * `media-typer.parse` then `format` with the parameters cleared. Two subtleties
+ * that a naive "slice at the first `;` and lowercase" gets wrong, both found by
+ * the seeded fuzz differential:
+ *
+ *  1. **Parameters are validated, not merely dropped (ZH-030).** A structurally
+ *     malformed parameter section makes the WHOLE content-type invalid —
+ *     `media-typer` throws, so `req.is` sees no type and must fail closed.
+ *     Salvaging just `b/text` from `b/text;*` (a parameter with no name) let it
+ *     match the `*` wildcard and hand the caller a bogus type.
+ *  2. **The subtype's structured-syntax suffix is split at the LAST `+` and
+ *     each half is revalidated,** with an empty suffix dropped — so `a/a+`
+ *     normalizes to `a/a`, `a/b+c+json` and `a/b+c.d` are rejected (a suffix is
+ *     a plain type-name: no `.`, no further `+`). This mirrors `splitType` +
+ *     `format`'s second validation pass.
  *
  * The surrounding trim is OWS only (space and tab) rather than
  * `String.prototype.trim`, which would also eat newlines and other Unicode
@@ -276,16 +293,134 @@ function normalizeContentType(header: string | undefined): string | undefined {
   const raw = semicolon === -1 ? header : header.slice(0, semicolon);
   const value = raw.replace(/^[ \t]+|[ \t]+$/g, "").toLowerCase();
   if (value.length === 0) return undefined;
-  // Exactly one slash, and both halves must be RFC 7230 tokens. Checking only
-  // for "a slash somewhere" was too lax: it let "a/b/c" through, which then
-  // matched `req.is("*/*")` and handed the caller a bogus type. The real
-  // `type-is` parses with `content-type`, which rejects it; the differential
-  // test caught the difference.
+  // Exactly one slash. The type name allows neither `.` nor `+`; the subtype as
+  // first parsed allows both. Checking only for "a slash somewhere" was too lax:
+  // it let "a/b/c" through, which then matched `req.is("*/*")`.
   const slash = value.indexOf("/");
   if (slash <= 0 || slash === value.length - 1) return undefined;
-  if (!isName(value, 0, slash, false)) return undefined;
-  if (!isName(value, slash + 1, value.length, true)) return undefined;
-  return value;
+  const type = value.slice(0, slash);
+  const subtype = value.slice(slash + 1);
+  if (!isName(type, 0, type.length, false, false)) return undefined;
+  if (!isName(subtype, 0, subtype.length, true, true)) return undefined;
+
+  // Split the structured-syntax suffix off the subtype at the LAST `+`, then
+  // revalidate: the core subtype allows `.` but not `+`; a non-empty suffix is
+  // a plain type-name (neither). An empty suffix (a trailing `+`) is dropped.
+  const plus = subtype.lastIndexOf("+");
+  let normalizedSubtype = subtype;
+  if (plus !== -1) {
+    const core = subtype.slice(0, plus);
+    const suffix = subtype.slice(plus + 1);
+    if (!isName(core, 0, core.length, true, false)) return undefined;
+    if (suffix.length === 0) {
+      normalizedSubtype = core;
+    } else {
+      if (!isName(suffix, 0, suffix.length, false, false)) return undefined;
+      normalizedSubtype = `${core}+${suffix}`;
+    }
+  }
+
+  // Only once the type is known valid do the parameters decide validity — they
+  // are validated on the RAW header (parameter validity is case-insensitive)
+  // from the first `;`.
+  if (semicolon !== -1 && !validParameters(header, semicolon)) return undefined;
+  return `${type}/${normalizedSubtype}`;
+}
+
+/**
+ * Is `header[start..]` a well-formed `*( ";" OWS parameter )` tail?
+ *
+ * Mirrors `media-typer@0.3.0`'s `paramRegExp` as a linear scan (decision 11 —
+ * no backtracking regex): each parameter is `";" OWS token OWS "=" OWS
+ * ( token / quoted-string ) OWS`, the parameters are contiguous, and the tail
+ * must consume the rest of the header. OWS is space only (not tab), exactly as
+ * the oracle's regex. Any deviation returns `false`, which fails the whole
+ * content-type closed.
+ *
+ * @param start index of the first `;` in `header`.
+ */
+function validParameters(header: string, start: number): boolean {
+  const length = header.length;
+  let i = start;
+  while (i < length) {
+    if (header.charCodeAt(i) !== 0x3b /* ; */) return false;
+    i++;
+    while (i < length && header.charCodeAt(i) === 0x20) i++; // OWS
+    const nameStart = i;
+    while (i < length && isParamToken(header.charCodeAt(i))) i++;
+    if (i === nameStart) return false; // parameter must have a name
+    while (i < length && header.charCodeAt(i) === 0x20) i++; // OWS
+    if (i >= length || header.charCodeAt(i) !== 0x3d /* = */) return false;
+    i++;
+    while (i < length && header.charCodeAt(i) === 0x20) i++; // OWS
+    if (i < length && header.charCodeAt(i) === 0x22 /* " */) {
+      i++;
+      let closed = false;
+      while (i < length) {
+        const c = header.charCodeAt(i);
+        if (c === 0x5c /* \ */) {
+          // quoted-pair: backslash then any 0x20–0x7e character.
+          i++;
+          if (i >= length) return false;
+          const q = header.charCodeAt(i);
+          if (q < 0x20 || q > 0x7e) return false;
+          i++;
+          continue;
+        }
+        if (c === 0x22 /* " */) {
+          i++;
+          closed = true;
+          break;
+        }
+        // qdtext: SP, "!", 0x23–0x5b, 0x5d–0x7e, 0x80–0xff.
+        if (
+          c === 0x20 ||
+          c === 0x21 ||
+          (c >= 0x23 && c <= 0x5b) ||
+          (c >= 0x5d && c <= 0x7e) ||
+          (c >= 0x80 && c <= 0xff)
+        ) {
+          i++;
+          continue;
+        }
+        return false;
+      }
+      if (!closed) return false;
+    } else {
+      const valueStart = i;
+      while (i < length && isParamToken(header.charCodeAt(i))) i++;
+      if (i === valueStart) return false; // parameter must have a value
+    }
+    while (i < length && header.charCodeAt(i) === 0x20) i++; // OWS before next ";"
+  }
+  return true;
+}
+
+/**
+ * RFC 2616 token char, per `media-typer`'s parameter grammar — broader than the
+ * RFC 6838 type-name set: `%`, `'`, `*`, `` ` ``, `|`, `~` are all legal here.
+ */
+function isParamToken(c: number): boolean {
+  return (
+    (c >= 0x30 && c <= 0x39) || // 0-9
+    (c >= 0x41 && c <= 0x5a) || // A-Z
+    (c >= 0x61 && c <= 0x7a) || // a-z
+    c === 0x21 || // !
+    c === 0x23 || // #
+    c === 0x24 || // $
+    c === 0x25 || // %
+    c === 0x26 || // &
+    c === 0x27 || // '
+    c === 0x2a || // *
+    c === 0x2b || // +
+    c === 0x2d || // -
+    c === 0x2e || // .
+    c === 0x5e || // ^
+    c === 0x5f || // _
+    c === 0x60 || // `
+    c === 0x7c || // |
+    c === 0x7e /* ~ */
+  );
 }
 
 /**
@@ -302,9 +437,22 @@ function normalizeContentType(header: string | undefined): string | undefined {
  *
  * A linear char-code scan rather than a character class, per decision 11.
  *
- * @param allowDotPlus subtypes may contain `.` and `+`; types may not.
+ * `.` and `+` are gated separately because `media-typer` treats them as three
+ * distinct grammars: a **type name** allows neither (`typeNameRegExp`); a raw
+ * **subtype** as first parsed allows both (`typeRegExp`); but the subtype
+ * *after the suffix is split off* allows `.` and not `+` (`subtypeNameRegExp`),
+ * and the **suffix** itself allows neither. See {@link normalizeContentType}.
+ *
+ * @param allowDot  `.` is a legal non-initial character.
+ * @param allowPlus `+` is a legal non-initial character.
  */
-function isName(value: string, start: number, end: number, allowDotPlus: boolean): boolean {
+function isName(
+  value: string,
+  start: number,
+  end: number,
+  allowDot: boolean,
+  allowPlus: boolean,
+): boolean {
   const length = end - start;
   if (length < 1 || length > 127) return false;
 
@@ -326,7 +474,8 @@ function isName(value: string, start: number, end: number, allowDotPlus: boolean
     ) {
       continue;
     }
-    if (allowDotPlus && (c === 0x2e || c === 0x2b)) continue;
+    if (allowDot && c === 0x2e) continue;
+    if (allowPlus && c === 0x2b) continue;
     return false;
   }
   return true;
