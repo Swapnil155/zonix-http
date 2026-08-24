@@ -4,7 +4,9 @@ All notable changes to `zonix-http`. Format follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 [SemVer](https://semver.org/) (0.x: minor may break).
 
-## [Unreleased] — security audit & hardening
+## [Unreleased]
+
+## [0.3.0] — 2026-08-25
 
 Source-level security audit (findings ZH-001…ZH-029; full report in
 `docs/security/audit-report.md`). Verdict: **APPROVED WITH CONDITIONS**.
@@ -14,22 +16,36 @@ Source-level security audit (findings ZH-001…ZH-029; full report in
 - **Static symlink escape fixed (ZH-001, Critical, CWE-59):** `serveStatic` now
   `realpath`-validates every served file (direct, cache, and index paths)
   against the real root, so a symlink/junction inside the root pointing outside
-  it returns 403 instead of leaking the target. Adds one `realpath` per served
-  file.
+  it returns 403 instead of leaking the target. **Consumer impact:** a
+  previously-served path that escaped the root via a symlink is now a 403;
+  legitimate files (including legitimately symlinked files whose target is
+  inside the root) are unaffected. Adds one `realpath` syscall per served file.
 - **Route-param null byte rejected (ZH-020, High, CWE-158):** a `%00` in a
   decoded path segment is now a 400 instead of reaching handlers as a literal
-  NUL.
-- **Slow-client timeouts pinned & configurable (ZH-004, CWE-400):** version-
-  stable `headersTimeout` (60s), `requestTimeout` (300s), `keepAliveTimeout`
-  (5s), each overridable via `ZonixOptions` (0 disables).
-- **Header choke-point hardened (ZH-007, CWE-93/113):** `assertHeaderValue`
-  now rejects all control characters (not just CR/LF/NUL) in values and
-  validates the header name as an RFC 7230 token.
-- **New opt-in `securityHeaders()` middleware (ZH-022):** safe defaults
-  (nosniff, Referrer-Policy, X-Frame-Options: DENY) on; CSP/HSTS/
-  Permissions-Policy off until configured; HSTS never on plaintext.
-- Added `test/security/` — 16 files, 78 regression tests covering every
-  confirmed vulnerability and verified-safe finding.
+  NUL. **Consumer impact:** a request path containing `%00` now returns 400.
+
+### Added
+
+- **Configurable slow-client timeouts (ZH-004, CWE-400):** the server pins
+  version-stable defaults — `headersTimeout` 60s, `requestTimeout` 300s,
+  `keepAliveTimeout` 5s — each overridable via `zonix({ headersTimeout,
+requestTimeout, keepAliveTimeout })` (`0` disables). **Consumer impact:**
+  timeouts are now identical across Node versions; on Node 18+ this matches the
+  runtime's own defaults, so no behavior change for typical requests.
+- **`securityHeaders()` middleware (ZH-022):** new opt-in, zero-dependency
+  middleware. Safe defaults (`X-Content-Type-Options: nosniff`,
+  `Referrer-Policy: strict-origin-when-cross-origin`, `X-Frame-Options: DENY`)
+  on as soon as it is added; CSP / HSTS / Permissions-Policy off until given a
+  value; HSTS never emitted on plaintext; never overrides a header a handler
+  already set.
+- **Stricter header validation (ZH-007, CWE-93/113):** `res.set`/`header`/
+  `append`/`links` now reject every control character (not just CR/LF/NUL) in
+  values and validate the header name as an RFC 7230 token. **Consumer impact:**
+  a header value containing other control characters, or a malformed header
+  name, now throws a framework error instead of relying on Node's backstop; the
+  accepted set equals Node's own, so valid headers are unaffected.
+- `test/security/` — 16 files, 78 regression tests covering every confirmed
+  vulnerability and verified-safe finding.
 
 ### Verified safe (no code change, regression-locked)
 
@@ -37,6 +53,15 @@ Request smuggling, prototype pollution across all parsers, body-size
 exhaustion, query-parser limits, host-header trust, ReDoS, proxy trust, cookie
 security, error non-disclosure, and HTTP-method handling were each audited and
 confirmed safe, with regression tests added.
+
+### Docs
+
+- New consumer-facing **Security & deployment** section in the README
+  (shared-responsibility model, `trustProxy`, session cookies, open-redirect
+  avoidance, `securityHeaders()`, TLS termination, timeouts, resource limits,
+  and an explicit "what zonix-http does not do" list).
+- `SECURITY.md` updated with the new guards and deployment guidance;
+  `docs/security/audit-report.md` and `docs/security/recon.md` added.
 
 ## [0.2.0] — 2026-08-24
 
