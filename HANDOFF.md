@@ -5,9 +5,7 @@ GitHub runners Node 20/22/24; install-from-registry smoke passed). README +
 SECURITY.md shipped, scorecard as neutral measurements (filings prereq
 dropped by Swapnil); numbers verbatim from results.md. Details: git log.
 
-**S31:** 0.1.1 (README guide) + 0.1.2 (OIDC verified) published. Release auth
-= npm Trusted Publishing, release.yml token-free (drop setup-node
-registry-url; publisher username is case-sensitive `Swapnil155`). 2FA on.
+**S31:** 0.1.1 + 0.1.2; release auth = OIDC Trusted Publishing. 2FA on.
 
 **S32: 0.2.0 features BUILT (`5d75a26`), suite 940/940.** req.signedCookies
 (cookie-parser@1.4.7 oracle 25/25 incl 2k fuzz; deviations: **proto**-named
