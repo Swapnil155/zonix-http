@@ -4,11 +4,9 @@
 **Swapnil dropped the upstream-filings prereq** (S29, his call): README shows
 the scorecard ratios neutrally — no Fastify-mechanism/W2 claim, footnote says
 "workload/harness-specific, rerun on yours" and prints the 0.91–0.98× losses
-plainly. Gates passed: every README number verbatim in results.md; all 13
-SECURITY.md test-cites resolve; quick-start snippet executed live (3 probes);
-Prettier clean. `@zonix` npm scope is TAKEN (user "zonix" exists) — restJS
-also invalid (uppercase). Name still `zonix-http` pending his word.
-**Next: s3 — cut 0.1.0** after his checklist below.
+plainly. Gates: every README number verbatim in results.md; all 13 SECURITY.md
+test-cites resolve; quick-start run live; Prettier clean. `@zonix` scope
+TAKEN on npm; name still `zonix-http` pending his word. **Next: s3 — 0.1.0.**
 
 ## Done this session (Phase 9 s1)
 
