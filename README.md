@@ -384,23 +384,219 @@ numbers said no — recorded so they don't come back:
 
 ## Security
 
-Secure by default, hardened by configuration. Static serving is symlink-safe
-(`realpath`-validated against the root), route params reject NUL bytes, header
-writes reject control characters and invalid names, and the server pins safe
-slow-client timeouts (`headersTimeout`/`requestTimeout`/`keepAliveTimeout`, all
-configurable). Add a baseline of response headers with the opt-in middleware:
+zonix-http is built to be safe by default and Express-compatible. A few security
+properties, though, depend on **how you deploy and configure** it — the framework
+can't choose them for you without either breaking compatibility or guessing wrong
+about your environment. This section covers those.
 
-```ts
-import zonix, { securityHeaders } from "zonix-http";
+> Examples use zonix-http's documented option names. If your setup wires them
+> differently, keep the **settings**; adjust the syntax.
 
-const app = zonix({ trustProxy: "loopback" }); // only behind a proxy you control
-app.use(securityHeaders({ contentSecurityPolicy: "default-src 'self'" }));
+### Shared responsibility
+
+**zonix-http handles for you**
+
+- Parsers that can't be prototype-polluted (null-prototype, key-filtered)
+- Byte-accurate body-size limits (the declared `Content-Length` can't lie its way past the cap)
+- Symlink-safe static file serving (real-path validated; no escape outside the root)
+- Header/response writes that reject CR/LF/NUL and control characters (no header injection)
+- Timing-safe, HMAC-signed cookies
+- Slow-client timeouts (slowloris resistance, independent of Node version)
+- Errors that don't leak stack traces, paths, or internals in production
+- Linear-time routing/parsing (no catastrophic-regex DoS)
+
+**You must configure (this section)**
+
+- `trustProxy` — only when you're behind a proxy you control
+- Cookie flags for sessions
+- Redirect destination validation
+- Security headers / CSP
+- TLS termination
+
+### Production checklist
+
+- [ ] `trustProxy` set to the **narrowest** form (hop count or CIDR) — never `true` when directly internet-exposed
+- [ ] Session cookies: `{ httpOnly: true, secure: true, sameSite: 'lax', signed: true }` + a strong `cookieSecret`
+- [ ] Any redirect built from user input is **allowlisted** in app code
+- [ ] `app.use(securityHeaders())` with a CSP tuned to your app
+- [ ] TLS terminated at a proxy or `node:https`; pinned timeouts kept or tightened
+- [ ] Body/query limits reviewed against what your endpoints actually accept
+
+---
+
+### Reverse proxies & client IP — `trustProxy`
+
+By default `trustProxy` is **off**, so `req.ip`, `req.protocol`, and `req.hostname`
+come from the socket and forwarded headers are ignored. That's the safe default: if
+you enabled trust while directly exposed, any client could spoof `X-Forwarded-For`
+to forge `req.ip` (defeating IP allowlists, rate limits, and audit logs) or
+`X-Forwarded-Proto` to fake HTTPS.
+
+Turn it on **only** when a proxy you control sits in front, and scope it as tightly
+as possible so a client can't inject extra hops:
+
+```js
+import zonix from "zonix-http";
+
+// Trust exactly one proxy hop (e.g. a single nginx/ALB in front):
+const app = zonix({ trustProxy: 1 });
+
+// Or trust a specific proxy network only:
+const app = zonix({ trustProxy: "10.0.0.0/8" });
 ```
 
-See [SECURITY.md](./SECURITY.md) for the disclosure process, threat model,
-deployment guidance, and the guard-by-guard list with the test that enforces
-each one, and [`docs/security/audit-report.md`](./docs/security/audit-report.md)
-for the full source-level audit (findings ZH-001…ZH-029) and verdict.
+Never use `trustProxy: true` on a service reachable directly from the internet.
+
+### Cookies & sessions
+
+The framework keeps Express-compatible cookie defaults so it doesn't break local
+HTTP development. For **authentication/session** cookies, opt into the hardened set
+explicitly:
+
+```js
+res.cookie("session", token, {
+  httpOnly: true, // not readable from JS → XSS can't exfiltrate the session
+  secure: true, // only sent over HTTPS → never exposed on a plaintext hop
+  sameSite: "lax", // withheld on cross-site requests → CSRF mitigation
+  signed: true, // HMAC-signed → tampering is detected and rejected
+  path: "/",
+  maxAge: 1000 * 60 * 60 * 8, // 8h
+});
+```
+
+Signed cookies require a strong secret — 32+ random bytes, from the environment,
+never hard-coded:
+
+```js
+const app = zonix({ cookieSecret: process.env.COOKIE_SECRET });
+```
+
+Rotate secrets on the read side with `cookieParser`: pass an array and each
+incoming cookie is verified against every secret in turn, so cookies signed with a
+retired secret keep validating while new cookies are signed with the current
+`cookieSecret`.
+
+```js
+import zonix, { cookieParser } from "zonix-http";
+
+const app = zonix({ cookieSecret: process.env.COOKIE_SECRET }); // signs new cookies
+app.use(cookieParser([process.env.COOKIE_SECRET, process.env.OLD_SECRET])); // verifies both
+```
+
+### Redirects — avoiding open redirects
+
+`res.redirect` sends wherever you tell it. Handing it raw user input is a classic
+open redirect (CWE-601): an attacker sends `?url=https://evil.example`, your domain
+issues the redirect, and the victim trusts it because it came from you. The
+framework can't allowlist for you — only your app knows which destinations are
+legitimate.
+
+```js
+// ❌ Open redirect
+app.get("/go", (req, res) => res.redirect(String(req.query.url)));
+
+// ✅ Allowlist known paths; fall back to a safe default
+const ALLOWED = new Set(["/dashboard", "/settings", "/"]);
+app.get("/go", (req, res) => {
+  const to = String(req.query.url || "");
+  res.redirect(ALLOWED.has(to) ? to : "/");
+});
+```
+
+If you must allow arbitrary same-origin paths, accept only values starting with a
+single `/` (reject `//host` and `/\host`, which are protocol-relative escapes), and
+never accept a full URL from the client.
+
+### Security headers — `securityHeaders()`
+
+Response security headers aren't on by default, because a strict policy (especially
+CSP) breaks apps until it's tuned to what they load. Enable the opt-in middleware
+and add a CSP for your app:
+
+```js
+import zonix, { securityHeaders } from "zonix-http";
+
+app.use(
+  securityHeaders({
+    contentSecurityPolicy: "default-src 'self'",
+    strictTransportSecurity: "max-age=15552000; includeSubDomains", // 180 days
+  }),
+);
+```
+
+Defaults that are safe everywhere are **on** as soon as you add it:
+`X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`,
+`X-Frame-Options: DENY`. The policies that need tuning — CSP, HSTS, Permissions-Policy —
+stay **off** until you configure them. HSTS is only emitted over HTTPS (never on a
+plaintext response, so you can't accidentally lock users out), and the middleware
+never overrides a header a route handler already set.
+
+### TLS / HTTPS
+
+zonix-http serves **HTTP**; it deliberately ships no TLS server and no custom
+crypto. Terminate TLS one of two ways:
+
+```js
+// Preferred: terminate at a reverse proxy (nginx, Caddy, ALB) in front of the app.
+// Then forward the scheme and trust it:
+const app = zonix({ trustProxy: 1 }); // proxy sets X-Forwarded-Proto: https
+
+// Or wrap the app with Node's built-in HTTPS:
+import https from "node:https";
+https.createServer({ key, cert }, app).listen(443);
+```
+
+Behind a proxy, make sure it sets `X-Forwarded-Proto` and that `trustProxy` is on,
+so `req.protocol` and `req.secure` (and therefore `secure` cookies) are correct.
+
+### Timeouts & slow-client protection
+
+The server ships pinned, version-stable timeouts so slowloris resistance doesn't
+depend on the Node release. Keep them, or tighten for your workload; set a value to
+`0` to disable that one:
+
+```js
+const app = zonix({
+  requestTimeout: 300_000, // whole-request deadline
+  headersTimeout: 60_000, // time allowed to send headers
+  keepAliveTimeout: 5_000, // idle keep-alive socket lifetime
+});
+```
+
+Sockets are released on timeout, client disconnect, and aborted requests.
+
+### Request size & resource limits
+
+Body parsers cap the true received bytes (not the client-declared length) and return
+`413` past the limit. Set limits to the smallest value each endpoint actually needs:
+
+```js
+import zonix from "zonix-http";
+
+app.use(zonix.json({ limit: "100kb" }));
+app.use(zonix.urlencoded({ limit: "100kb", extended: true }));
+```
+
+The extended query parser also enforces depth, array-length, and parameter-count
+limits by default to bound parsing cost — leave these on.
+
+### What zonix-http does not do
+
+So you don't assume protection that isn't there:
+
+- **No multipart/`form-data` parser** — file uploads are not handled; add a dedicated,
+  limit-enforcing parser if you need them.
+- **No WebSocket / upgrade handling** — bring your own WS layer.
+- **No built-in TLS server** — terminate TLS at a proxy or `node:https` (above).
+- **No automatic request-body decompression** — a `Content-Encoding: gzip` request
+  body is not silently inflated (which also means no decompression-bomb surface);
+  handle it explicitly if a client will send compressed bodies.
+
+### Reporting a vulnerability
+
+Please do **not** open a public GitHub issue for security reports. See
+[`SECURITY.md`](./SECURITY.md) for the private disclosure process, supported
+versions, and expected response timeline.
 
 ## License
 
