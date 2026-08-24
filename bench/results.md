@@ -2346,3 +2346,20 @@ First push to GitHub runs the same matrix for real.
 
 Next: README + scorecard (ranges, both M1 rows, compat table with the
 asserted deviations, "Measured and rejected"), SECURITY.md; then 0.1.0.
+
+---
+
+# 0.2.0 gate (2026-08-24) — hello, v0.1.2 baseline vs HEAD
+
+Baseline = v0.1.2 dist built in a clean worktree; candidate = HEAD dist
+(`5d75a26`: req.signedCookies + serveStatic maxAge/immutable). Quiet host
+(cpu 7.4%; Docker backend off, Spotify running). First attempt VOIDED per
+rule 2 (candidate spread 20.2%); rerun valid:
+
+baseline median 89,530 rps [89,555 89,222 89,530 88,736 89,990 89,760 88,774] spread 1.4%
+candidate median 89,005 rps [89,005 89,453 88,506 88,429 89,376 90,413 88,288] spread 2.4%
+per-pair -0.6% +0.3% -1.1% -0.3% -0.7% +0.7% -0.5%
+**median of paired deltas -0.55%, range -1.1..+0.7% — PASS (budget -2%).**
+
+Suite 940/940 (cookie-parser@1.4.7 oracle 25/25 incl. 2k-case fuzz;
+express.static Cache-Control wire-diff). Cut as v0.2.0.

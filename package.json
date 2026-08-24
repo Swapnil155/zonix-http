@@ -1,6 +1,6 @@
 {
   "name": "zonix-http",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "Zero-dependency, Express-compatible HTTP framework for Node.js.",
   "type": "module",
   "license": "MIT",

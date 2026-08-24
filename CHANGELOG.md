@@ -4,7 +4,7 @@ All notable changes to `zonix-http`. Format follows
 [Keep a Changelog](https://keepachangelog.com/); versions follow
 [SemVer](https://semver.org/) (0.x: minor may break).
 
-## [Unreleased] — 0.2.0
+## [0.2.0] — 2026-08-24
 
 ### Added
 
