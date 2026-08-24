@@ -1,12 +1,14 @@
 # HANDOFF
 
-**Phase:** 9 — IN PROGRESS (S28, 2026-08-22). s1 packaging + CI done;
-s2 **half done: SECURITY.md shipped** (contact, threat model, guards list —
-every line cites its test). **README is HELD**: prereq is both upstream
-filings submitted (Swapnil confirmed NOT yet, S28). Next: README once he
-returns with both links (quick start, 8-row compat table, scorecard: D2 ranges
-+ both M1 rows + docker repro, footprint, W2 rev-4 caveats-first, "Measured
-and rejected" incl. T-1 1.362×; numbers verbatim from results.md); s3 = 0.1.0.
+**Phase:** 9 — s2 DONE (S29, 2026-08-24). SECURITY.md + README shipped.
+**Swapnil dropped the upstream-filings prereq** (S29, his call): README shows
+the scorecard ratios neutrally — no Fastify-mechanism/W2 claim, footnote says
+"workload/harness-specific, rerun on yours" and prints the 0.91–0.98× losses
+plainly. Gates passed: every README number verbatim in results.md; all 13
+SECURITY.md test-cites resolve; quick-start snippet executed live (3 probes);
+Prettier clean. `@zonix` npm scope is TAKEN (user "zonix" exists) — restJS
+also invalid (uppercase). Name still `zonix-http` pending his word.
+**Next: s3 — cut 0.1.0** after his checklist below.
 
 ## Done this session (Phase 9 s1)
 
