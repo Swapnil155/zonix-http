@@ -27,5 +27,4 @@ SECURITY.md test-cites resolve; quick-start run live). Spec committed
 3. Upstream filings (Express docs PR, Fastify discussion) remain DRAFTED,
    NOT filed — only needed if the README ever adds mechanism claims (W2).
 
-**Next session (v0.2.0 track or maintenance): open with the dogfood
-service's first friction list.**
+**Next session: open with the dogfood service's first friction list.**
