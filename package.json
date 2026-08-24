@@ -4,6 +4,14 @@
   "description": "Zero-dependency, Express-compatible HTTP framework for Node.js.",
   "type": "module",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Swapnil155/zonix-http.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Swapnil155/zonix-http/issues"
+  },
+  "homepage": "https://github.com/Swapnil155/zonix-http#readme",
   "sideEffects": false,
   "engines": {
     "node": ">=20"
