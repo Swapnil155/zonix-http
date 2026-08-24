@@ -1,0 +1,14 @@
+{
+  "name": "zonix-http-examples",
+  "private": true,
+  "type": "module",
+  "description": "Runnable app-layer integration examples for zonix-http. Not published; excluded from the package tarball.",
+  "scripts": {
+    "verify": "node verify.mjs"
+  },
+  "dependencies": {
+    "busboy": "^1.6.0",
+    "socket.io": "^4.8.1",
+    "socket.io-client": "^4.8.1"
+  }
+}
