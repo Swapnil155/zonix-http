@@ -23,6 +23,18 @@ export interface ServeStaticOptions {
    * (206) and `compression()` all operate on top of the cached bytes.
    */
   cache?: { maxBytes: number };
+  /**
+   * `Cache-Control: public, max-age=...` for every served file (including
+   * 304 and 206 responses). Milliseconds, or a duration string (`"30s"`,
+   * `"5m"`, `"12h"`, `"7d"`, `"1w"`, `"1y"`). Clamped to one year, `send`'s
+   * ceiling. **Nothing is sent unless set** - a deliberate deviation from
+   * Express, which defaults to `max-age=0`; when set, the wire format
+   * matches `send`'s exactly. A handler that already set `Cache-Control`
+   * wins.
+   */
+  maxAge?: number | string;
+  /** Append `, immutable`: for fingerprinted assets that never change under the same URL. */
+  immutable?: boolean;
 }
 
 /**
@@ -45,6 +57,7 @@ export function serveStatic(root: string, options: ServeStaticOptions = {}): Mid
   const index = options.index === undefined ? "index.html" : options.index;
   const allowDotfiles = options.dotfiles === "allow";
   const cache = compileCache(options.cache);
+  const cacheControl = compileCacheControl(options);
 
   return function serveStaticMiddleware(req, res, next) {
     const method = req.method?.toUpperCase();
@@ -69,7 +82,7 @@ export function serveStatic(root: string, options: ServeStaticOptions = {}): Mid
     if (!allowDotfiles && hasDotfileSegment(target.slice(base.length))) return next();
 
     if (cache !== undefined) {
-      void serveCached(cache, target, index, res, next);
+      void serveCached(cache, target, index, cacheControl, res, next);
       return;
     }
 
@@ -104,6 +117,9 @@ export function serveStatic(root: string, options: ServeStaticOptions = {}): Mid
         return;
       }
 
+      if (cacheControl !== undefined && !res.hasHeader("Cache-Control")) {
+        res.setHeader("Cache-Control", cacheControl);
+      }
       try {
         // Unlike res.sendFile(), an unmapped extension is served rather than refused:
         // a static directory is expected to hold whatever it holds.
@@ -126,6 +142,7 @@ async function serveCached(
   cache: FileCache,
   target: string,
   index: string | false,
+  cacheControl: string | undefined,
   res: ZonixResponse,
   next: (err?: unknown) => void,
 ): Promise<void> {
@@ -159,6 +176,9 @@ async function serveCached(
   }
 
   const type = lookupMime(file) ?? DEFAULT_MIME;
+  if (cacheControl !== undefined && !res.hasHeader("Cache-Control")) {
+    res.setHeader("Cache-Control", cacheControl);
+  }
   const hit = cache.get(file);
   if (hit !== undefined && FileCache.isCurrent(hit, stats)) {
     try {
@@ -199,6 +219,59 @@ function compileCache(option: ServeStaticOptions["cache"]): FileCache | undefine
     );
   }
   return new FileCache(maxBytes);
+}
+
+/** Milliseconds in one year - `send`'s MAX_MAXAGE, the RFC 9111 suggested ceiling. */
+const MAX_MAXAGE = 60 * 60 * 24 * 365 * 1000;
+
+const DURATION_UNITS: Record<string, number> = {
+  "": 1,
+  ms: 1,
+  s: 1000,
+  m: 60 * 1000,
+  h: 60 * 60 * 1000,
+  d: 24 * 60 * 60 * 1000,
+  w: 7 * 24 * 60 * 60 * 1000,
+  y: 365 * 24 * 60 * 60 * 1000,
+};
+
+function compileCacheControl(options: ServeStaticOptions): string | undefined {
+  if (options.maxAge === undefined && options.immutable === undefined) return undefined;
+  const ms = options.maxAge === undefined ? 0 : toMilliseconds(options.maxAge);
+  let value = `public, max-age=${Math.floor(Math.min(Math.max(0, ms), MAX_MAXAGE) / 1000)}`;
+  if (options.immutable === true) value += ", immutable";
+  return value;
+}
+
+/** Duration to milliseconds: a number passes through, a string is `<digits><unit>`. */
+function toMilliseconds(value: number | string): number {
+  if (typeof value === "number") {
+    if (!Number.isFinite(value) || value < 0) {
+      throw frameworkError(
+        `serveStatic(): maxAge must be a non-negative number of milliseconds, received ${value}`,
+        serveStatic,
+        ErrorCode.INVALID_ARGUMENT,
+      );
+    }
+    return value;
+  }
+  const trimmed = value.trim().toLowerCase();
+  let i = 0;
+  while (i < trimmed.length) {
+    const c = trimmed.charCodeAt(i);
+    if ((c >= 48 && c <= 57) || c === 46) i++;
+    else break;
+  }
+  const amount = Number(trimmed.slice(0, i));
+  const scale = DURATION_UNITS[trimmed.slice(i).trim()];
+  if (i === 0 || !Number.isFinite(amount) || scale === undefined) {
+    throw frameworkError(
+      `serveStatic(): cannot read maxAge ${JSON.stringify(value)}. Use milliseconds or e.g. "12h", "7d", "1y"`,
+      serveStatic,
+      ErrorCode.INVALID_ARGUMENT,
+    );
+  }
+  return amount * scale;
 }
 
 function forbidden(requestPath: string): Error {

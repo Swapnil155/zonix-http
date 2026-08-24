@@ -11,6 +11,7 @@ import {
   typeIs,
 } from "./compat/request.js";
 import { EMPTY, settingsOf } from "./internal/constants.js";
+import type { Cookies, SignedCookies } from "./cookies/parse.js";
 import { resolveType } from "./http/mime.js";
 import {
   preferredCharsets,
@@ -60,7 +61,14 @@ export class ZonixRequest extends IncomingMessage {
   params: StringMap = EMPTY;
 
   /** Populated by `cookieParser()`. Shared frozen empty object until then. */
-  cookies: StringMap = EMPTY;
+  cookies: Cookies = EMPTY;
+
+  /**
+   * Signature-verified cookies, populated by `cookieParser()` when a secret is
+   * available (the app's `cookieSecret` or the middleware's argument). A
+   * tampered signature yields `false`. Shared frozen empty object until then.
+   */
+  signedCookies: SignedCookies = EMPTY;
 
   #query: ParsedQuery | undefined = undefined;
   #path: string | undefined = undefined;

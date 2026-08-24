@@ -37,7 +37,12 @@ export { urlencoded, type UrlencodedOptions } from "./body/urlencoded.js";
 export { raw, type RawOptions } from "./body/raw.js";
 export { text, type TextOptions } from "./body/text.js";
 export { parseExtendedQuery, type ExtendedQueryOptions } from "./query/extended.js";
-export { cookieParser } from "./cookies/parse.js";
+export {
+  cookieParser,
+  type Cookies,
+  type CookieValue,
+  type SignedCookies,
+} from "./cookies/parse.js";
 export { createSerializer, escapeString, type Schema, type Serializer } from "./http/serialize.js";
 export { cors, type CorsOptions, type OriginResolver } from "./middleware/cors.js";
 export { serveStatic, type ServeStaticOptions } from "./middleware/serve-static.js";

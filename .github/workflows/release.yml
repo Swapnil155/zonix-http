@@ -16,7 +16,7 @@ on:
     tags: ["v*"]
 
 permissions:
-  contents: read
+  contents: write # checkout + creating the GitHub Release
   id-token: write # npm provenance (Sigstore) needs an OIDC token
 
 jobs:
@@ -51,3 +51,9 @@ jobs:
       - name: Publish
         if: vars.PUBLISH_ENABLED == 'true'
         run: npm publish --provenance --access public
+
+      - name: GitHub Release
+        if: vars.PUBLISH_ENABLED == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes

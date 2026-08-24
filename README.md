@@ -132,6 +132,8 @@ body, other content-type) leaves `req.body = {}`.
 
 ```ts
 app.use(zonix.static("./public"));
+// browser caching for fingerprinted assets (Cache-Control: public, max-age=..., immutable):
+app.use(zonix.static("./assets", { maxAge: "1y", immutable: true }));
 // dotfiles are never served unless you opt in:
 app.use(zonix.static("./public", { dotfiles: "allow" }));
 ```
@@ -152,10 +154,21 @@ app.get("/login", (req, res) => {
   res.cookie("session", "user42", { signed: true, httpOnly: true });
   res.json(req.cookies); // null-prototype: a "__proto__" cookie is inert data
 });
+
+app.get("/me", (req, res) => {
+  // Verified server-side: a tampered signature reads back as `false`,
+  // never as the attacker's value.
+  const session = req.signedCookies.session;
+  if (session === false || session === undefined) return res.sendStatus(401);
+  res.json({ user: session });
+});
 ```
 
 Signed cookies are HMAC-SHA256, wire-compatible with Express's
-`cookie-signature` format.
+`cookie-signature` format, and verified with a constant-time compare. Always
+pair a session cookie with `httpOnly: true` (no JavaScript access — XSS
+cannot steal it), and add `secure: true` in production so it only travels
+over HTTPS.
 
 ### Content negotiation
 
