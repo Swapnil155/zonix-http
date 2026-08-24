@@ -5,14 +5,9 @@ GitHub runners Node 20/22/24; install-from-registry smoke passed). README +
 SECURITY.md shipped, scorecard as neutral measurements (filings prereq
 dropped by Swapnil); numbers verbatim from results.md. Details: git log.
 
-**S31 (2026-08-24, post-launch):** 0.1.1 (README: Guide with 8 snippet-verified
-feature areas + Performance recipes; npm page refreshed) and 0.1.2 (OIDC
-verification) published. **Release auth is now npm Trusted Publishing (OIDC)**
-— release.yml token-free (gotchas fixed: setup-node registry-url writes an
-.npmrc reading $NODE_AUTH_TOKEN and must be dropped; the publisher entry's
-username is case-sensitive: `Swapnil155`, not `swapnil155` — E404-on-PUT was
-the symptom). npm account has 2FA (security key). Stray `50000` file removed.
-Repo renamed lowercase zonix-http.
+**S31:** 0.1.1 (README guide) + 0.1.2 (OIDC verified) published. Release auth
+= npm Trusted Publishing, release.yml token-free (drop setup-node
+registry-url; publisher username is case-sensitive `Swapnil155`). 2FA on.
 
 **S32: 0.2.0 features BUILT (`5d75a26`), suite 940/940.** req.signedCookies
 (cookie-parser@1.4.7 oracle 25/25 incl 2k fuzz; deviations: **proto**-named
