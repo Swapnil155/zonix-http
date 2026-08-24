@@ -55,6 +55,132 @@ settings API (`app.set/enable/disable`), `zonix.static(root)`,
 trust proxy, and central error handling — `next(err)`, thrown errors and
 rejected async handlers all reach your error middleware.
 
+## Guide
+
+### Routing and params
+
+```ts
+app.get("/posts/:slug", (req, res) => {
+  res.json({ slug: req.params.slug });
+});
+
+app.get("/files/*", (req, res) => {
+  // wildcard capture is req.params["*"]
+  res.send(`you asked for ${req.params["*"]}`);
+});
+
+app.all("/admin/*", requireAuth); // every method
+```
+
+Static segments beat params, params beat wildcards — `/posts/new` wins over
+`/posts/:slug`. Registering the same route twice throws at startup instead of
+shadowing silently.
+
+### Routers and mounting
+
+```ts
+import zonix from "zonix-http";
+
+const users = zonix.Router();
+users.get("/", (req, res) => res.json({ list: true }));
+users.get("/:id", (req, res) => {
+  // req.baseUrl === "/api/users", req.originalUrl === the full path
+  res.json({ id: req.params.id });
+});
+
+const app = zonix();
+app.use("/api/users", users); // routers nest arbitrarily deep
+```
+
+### Middleware and error handling
+
+```ts
+app.use((req, res, next) => {
+  console.log(req.method, req.url);
+  next();
+});
+
+// async handlers just work — rejections reach the error middleware
+app.get("/data", async (req, res) => {
+  const rows = await db.query();
+  res.json(rows);
+});
+
+// 4-arity = error middleware; runs for next(err), throws, and rejections
+app.use((err, req, res, next) => {
+  if (res.headersSent) return; // response already on the wire
+  res.status(err.status ?? 500).json({ error: err.message });
+});
+```
+
+### Body parsing
+
+```ts
+app.use(zonix.json({ limit: "1mb" }));
+app.use(zonix.urlencoded({ extended: true, limit: "100kb" }));
+app.use(zonix.text());
+app.use(zonix.raw({ type: "application/octet-stream" }));
+
+app.post("/echo", (req, res) => res.json(req.body));
+```
+
+Limits are byte-exact; an oversized body is answered with a real `413` and
+`Connection: close`, never a dropped socket. A request the parser skips (no
+body, other content-type) leaves `req.body = {}`.
+
+### Static files
+
+```ts
+app.use(zonix.static("./public"));
+// dotfiles are never served unless you opt in:
+app.use(zonix.static("./public", { dotfiles: "allow" }));
+```
+
+ETags, 304s, byte ranges/206 and gzip/deflate/brotli negotiation are built
+in; a miss calls `next()` so your routes still run.
+
+### Cookies
+
+```ts
+import zonix, { cookieParser } from "zonix-http";
+
+const app = zonix({ cookieSecret: process.env.COOKIE_SECRET });
+app.use(cookieParser());
+
+app.get("/login", (req, res) => {
+  res.cookie("theme", "dark");
+  res.cookie("session", "user42", { signed: true, httpOnly: true });
+  res.json(req.cookies); // null-prototype: a "__proto__" cookie is inert data
+});
+```
+
+Signed cookies are HMAC-SHA256, wire-compatible with Express's
+`cookie-signature` format.
+
+### Content negotiation
+
+```ts
+app.get("/report", (req, res) => {
+  res.format({
+    "application/json": () => res.json({ report: true }),
+    "text/html": () => res.send("<h1>Report</h1>"),
+    default: () => res.sendStatus(406),
+  });
+});
+```
+
+### Settings and proxies
+
+```ts
+const app = zonix({ trustProxy: "loopback" }); // or via the settings API:
+app.set("trust proxy", 1);
+app.set("query parser", "extended"); // nested a[b][c]= query strings
+app.disable("x-powered-by"); // accepted for compat (zonix never sends it)
+```
+
+Trust proxy is **off by default** — `req.ip` is the socket address and no
+`X-Forwarded-*` header can influence anything until you turn it on.
+
 ## Features
 
 - **Router** — radix tree per method; static > param > wildcard precedence
@@ -154,6 +280,80 @@ Fastify's steady-state memory is only 1.20× zonix's — the order-of-magnitude
 differences are install size and file count, not RSS. On a machine with
 antivirus scanning, first-ever import measured 21.6 ms for zonix vs 1,240 ms
 (express) and 1,487 ms (fastify): file count becomes wall-clock.
+
+### Performance recipes
+
+Everything below is opt-in and copy-paste ready. zonix is pay-for-what-you-
+use: features you don't touch cost zero per request, so the recipes are
+mostly about switching on the right cache for your workload.
+
+**1. Cache small static assets in memory** — the single biggest win for
+asset-heavy apps (2.5× zonix's own default, ~4× Express, measured above):
+
+```ts
+app.use(zonix.static("./public", { cache: { maxBytes: 8 * 1024 * 1024 } }));
+```
+
+LRU by bytes; every hit revalidates against the file's mtime with one
+`stat()`, so an edited file is never served stale. 304s, ranges and
+compression all work on top of the cached bytes.
+
+**2. Schema serializer for hot JSON endpoints** — skip `JSON.stringify`'s
+shape discovery on routes you hit thousands of times a second:
+
+```ts
+import zonix, { createSerializer } from "zonix-http";
+
+const serializeUser = createSerializer({
+  type: "object",
+  properties: {
+    id: { type: "number" },
+    name: { type: "string" },
+    active: { type: "boolean" },
+  },
+});
+
+app.get("/users/:id", (req, res) => {
+  res.type("json").send(serializeUser({ id: 42, name: "ada", active: true }));
+});
+```
+
+Parity is the contract: for any value it returns exactly what
+`JSON.stringify` would (fuzz-tested), so a mismatched value degrades
+gracefully instead of corrupting output. No codegen, no `eval`.
+
+**3. Keep the simple query parser unless you need nesting.** The default
+parses `?a=1&b=2` with a flat, allocation-light scanner. Only opt into
+`app.set("query parser", "extended")` on apps that actually read
+`?filter[status]=active` shapes — nested parsing costs more per request.
+
+**4. Leave ETags off unless clients revalidate.** zonix ships ETags off by
+default (a deliberate deviation from Express): hashing every response body
+costs CPU per request, and most APIs sit behind a CDN or proxy that already
+does this. If your clients _do_ send `If-None-Match`, enable it and 304s
+save you the bandwidth:
+
+```ts
+import { etag } from "zonix-http";
+app.use(etag()); // weak ETags + conditional-request handling
+```
+
+**5. Set body limits to what you actually accept.** The limit is enforced
+byte-by-byte as chunks arrive — a tight limit means an abusive upload is cut
+off after `limit` bytes, not after your default:
+
+```ts
+app.use(zonix.json({ limit: "16kb" })); // typical API payloads are small
+```
+
+**6. Register everything before traffic, not during.** Route chains are
+precomposed and cached; calling `app.use()` after requests have started
+invalidates that cache. Structure apps as: register all middleware and
+routes, then `app.listen()`.
+
+**7. Don't enable what you don't use.** `trustProxy`, `cookieSecret`,
+extended queries and compression each cost only when active — the fastest
+configuration is the default one plus exactly what your app needs.
 
 ### Measured and rejected
 
