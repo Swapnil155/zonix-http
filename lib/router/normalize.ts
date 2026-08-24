@@ -31,11 +31,20 @@ export function normalize(path: string): string {
 /**
  * Percent-decode one segment.
  *
- * @throws a 400-tagged framework error when the escape is malformed, so a bad
- * URL is a client error rather than a crash.
+ * @throws a 400-tagged framework error when the escape is malformed, or when the
+ * decoded segment contains a NUL byte (`%00`). A NUL is never legitimate in a
+ * path and can truncate a downstream filesystem or string operation
+ * (CWE-158/CWE-626), so a param value can never carry one to a handler.
  */
 export function decodeSegment(segment: string, path: string): string {
-  if (segment.indexOf("%") === -1) return segment;
+  const decoded = segment.indexOf("%") === -1 ? segment : decodePercent(segment, path);
+  if (decoded.indexOf("\0") !== -1) {
+    throw frameworkError(`Null byte in path: ${path}`, decodeSegment, ErrorCode.BAD_ENCODING, 400);
+  }
+  return decoded;
+}
+
+function decodePercent(segment: string, path: string): string {
   try {
     return decodeURIComponent(segment);
   } catch {
