@@ -126,8 +126,43 @@ describe("typeIs: differential against type-is", () => {
     }
   });
 
-  test("fuzz: 4000 generated type/pattern pairs agree", () => {
+  // Seed-independent counterexamples, pinned so a regression cannot hide behind
+  // an unlucky random seed. The malformed cases were once "salvaged" into a
+  // usable type by req.is (ZH-030); the +suffix cases pin the normalization the
+  // oracle applies (empty suffix dropped, non-empty suffix preserved).
+  test("malformed content-types fail closed (ZH-030 counterexamples)", () => {
+    const H = headersOf;
+    const W = withBody;
+    // The exact fuzz counterexample that motivated the fix.
+    assert.equal(typeIs(H("b/text;*"), ["*/*"]), false, "b/text;*");
+    // Siblings: a parameter with no name/value, or nothing after the ';'.
+    for (const ct of [
+      "b/text;*", // parameter has no name
+      "application/json;", // trailing ';', no parameter
+      "application/json;;", // empty parameter
+      "text/plain;", // type/subtype;
+      "application/json; ", // whitespace-only after ';'
+      "application/json; =utf-8", // parameter with no name
+      "application/json;charset", // parameter with no value
+    ]) {
+      assert.equal(typeIs(H(ct), ["*/*", "json"]), false, ct);
+      // Must equal the oracle, not merely be false.
+      assert.equal(typeIs(H(ct), ["*/*", "json"]), typeis(W(ct), ["*/*", "json"]), ct);
+    }
+    // Structured-syntax suffix normalization: empty suffix dropped, real one kept.
+    assert.equal(typeIs(H("a/b+"), ["*/*"]), "a/b", "a/b+ normalizes to a/b");
+    assert.equal(
+      typeIs(H("application/vnd.api+json"), ["+json"]),
+      "application/vnd.api+json",
+      "+json suffix preserved",
+    );
+  });
+
+  test("fuzz: 4000 generated type/pattern pairs agree", (t) => {
     const seed = pickSeed();
+    // Always surface the seed (not only on failure) so any run is replayable
+    // with SEED=<n> node scripts/run-tests.mjs.
+    t.diagnostic(`type-is fuzz seed=${seed}`);
     const rng = makeRng(seed);
     const pool = [
       ..."abcxyz019",
