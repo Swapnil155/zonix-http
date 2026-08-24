@@ -1,4 +1,4 @@
-import { readFile, stat } from "node:fs/promises";
+import { readFile, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { ErrorCode, frameworkError } from "../errors/index.js";
 import { statTag } from "../http/etag.js";
@@ -59,6 +59,24 @@ export function serveStatic(root: string, options: ServeStaticOptions = {}): Mid
   const cache = compileCache(options.cache);
   const cacheControl = compileCacheControl(options);
 
+  // The canonical (symlink-resolved) root, resolved once and cached. The lexical
+  // check below blocks `../`, but not a symlink *inside* the root that points
+  // out of it: `secret -> /etc` makes `/secret/passwd` resolve lexically inside
+  // while `stat` follows it out (CWE-22/59). Every served file is realpath'd and
+  // required to stay under this real root before a byte is read.
+  let realRoot: string | undefined;
+  let realRootResolved = false;
+  const resolveRealRoot = async (): Promise<string | undefined> => {
+    if (realRootResolved) return realRoot;
+    realRootResolved = true;
+    try {
+      realRoot = await realpath(base);
+    } catch {
+      realRoot = undefined; // root missing → every request 404s anyway
+    }
+    return realRoot;
+  };
+
   return function serveStaticMiddleware(req, res, next) {
     const method = req.method?.toUpperCase();
     if (method !== "GET" && method !== "HEAD") return next();
@@ -82,7 +100,18 @@ export function serveStatic(root: string, options: ServeStaticOptions = {}): Mid
     if (!allowDotfiles && hasDotfileSegment(target.slice(base.length))) return next();
 
     if (cache !== undefined) {
-      void serveCached(cache, target, index, cacheControl, res, next);
+      void (async () => {
+        await serveCached(
+          cache,
+          target,
+          index,
+          cacheControl,
+          await resolveRealRoot(),
+          req.path,
+          res,
+          next,
+        );
+      })();
       return;
     }
 
@@ -117,6 +146,11 @@ export function serveStatic(root: string, options: ServeStaticOptions = {}): Mid
         return;
       }
 
+      const real = await realpathWithin(file, await resolveRealRoot());
+      if (real === ESCAPED) return next(forbidden(req.path)); // symlink out of root
+      if (real === MISSING) return next();
+      file = real; // serve the canonical path, not the symlink
+
       if (cacheControl !== undefined && !res.hasHeader("Cache-Control")) {
         res.setHeader("Cache-Control", cacheControl);
       }
@@ -143,6 +177,8 @@ async function serveCached(
   target: string,
   index: string | false,
   cacheControl: string | undefined,
+  realRoot: string | undefined,
+  reqPath: string,
   res: ZonixResponse,
   next: (err?: unknown) => void,
 ): Promise<void> {
@@ -174,6 +210,11 @@ async function serveCached(
     next();
     return;
   }
+
+  const real = await realpathWithin(file, realRoot);
+  if (real === ESCAPED) return next(forbidden(reqPath)); // symlink out of root
+  if (real === MISSING) return next();
+  file = real; // canonical path is also the cache key, deduping symlinks
 
   const type = lookupMime(file) ?? DEFAULT_MIME;
   if (cacheControl !== undefined && !res.hasHeader("Cache-Control")) {
@@ -272,6 +313,32 @@ function toMilliseconds(value: number | string): number {
     );
   }
   return amount * scale;
+}
+
+/** Distinct sentinels so an escaped path (403) is never confused with a missing one (404). */
+const ESCAPED = Symbol("escaped-root");
+const MISSING = Symbol("missing");
+
+/**
+ * Resolve the real (symlink-followed) path of `file` and require it to stay
+ * under `realRoot`. Returns the canonical path when contained, {@link ESCAPED}
+ * when the real path is outside the root (a symlink pointing out), or
+ * {@link MISSING} when it cannot be resolved (gone between stat and open — the
+ * TOCTOU window; treated as not-found, never served).
+ */
+async function realpathWithin(
+  file: string,
+  realRoot: string | undefined,
+): Promise<string | typeof ESCAPED | typeof MISSING> {
+  if (realRoot === undefined) return MISSING;
+  let real: string;
+  try {
+    real = await realpath(file);
+  } catch {
+    return MISSING;
+  }
+  if (real === realRoot || real.startsWith(realRoot + path.sep)) return real;
+  return ESCAPED;
 }
 
 function forbidden(requestPath: string): Error {
