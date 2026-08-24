@@ -18,15 +18,13 @@ Full report: `docs/security/audit-report.md`.
 
 ## Verified safe (regression-locked, no code change)
 
-ZH-002 smuggling, ZH-003/006 proto-pollution, ZH-005 body exhaustion, ZH-008
-host, ZH-009 routing, ZH-010 ReDoS, ZH-013 proxy, ZH-014 redirect (app duty),
-ZH-015 compression, ZH-016 cookies, ZH-017 errors, ZH-018 methods, ZH-019
-limits. N/A: ZH-011 multipart, ZH-012 ws, ZH-023 TLS (all absent, documented).
+ZH-002 smuggling, ZH-003/006 proto-pollution, ZH-005 body, ZH-008 host, ZH-009
+routing, ZH-010 ReDoS, ZH-013 proxy, ZH-014 redirect (app duty), ZH-015
+compression, ZH-016 cookies, ZH-017 errors, ZH-018 methods, ZH-019 limits.
+N/A (absent, documented): ZH-011 multipart, ZH-012 ws, ZH-023 TLS.
 
 ## State
 
-Suite **1017 pass / 1 skip / 0 fail** (was 940). tsc clean. npm audit --omit=dev
-0 vulns. 0 runtime deps. `test/security/` = 16 files, 78 tests. Docs: SECURITY.md
-updated, README security section, CHANGELOG [Unreleased]. Branch: master, all
-committed. **Next: cut 0.3.0** (audit fixes + signed-cookie/static from 0.2.x
-follow-ons) when ready.
+Suite **1017 pass / 1 skip / 0 fail** (was 940). tsc clean; npm audit 0; 0 deps.
+`test/security/` = 16 files, 78 tests. SECURITY.md/README/CHANGELOG updated.
+All committed on master. **Next: cut 0.3.0** with the audit fixes when ready.
