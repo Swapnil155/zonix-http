@@ -14,6 +14,15 @@ username is case-sensitive: `Swapnil155`, not `swapnil155` — E404-on-PUT was
 the symptom). npm account has 2FA (security key). Stray `50000` file removed.
 Repo renamed lowercase zonix-http.
 
+**S32: 0.2.0 features BUILT (`5d75a26`), suite 940/940.** req.signedCookies
+(cookie-parser@1.4.7 oracle 25/25 incl 2k fuzz; deviations: **proto**-named
+cookie kept as inert null-proto data vs oracle drops; empty name dropped vs
+oracle keeps; rotation arrays; j: revival both maps) + serveStatic
+maxAge/immutable (send wire format, express.static diff, rides 304/206/cache
+paths, off unless set) + CHANGELOG.md + gh-release step in release.yml
+(contents: write). README guide updated. **Before cutting v0.2.0: paired
+hello gate on a quiet host (rule 2), then npm version minor + tag.**
+
 ## Open items (Swapnil)
 
 1. **Pick the dogfood service** — the v1.0.0 clock started today.
