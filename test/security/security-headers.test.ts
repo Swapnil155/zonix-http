@@ -40,7 +40,9 @@ describe("ZH-022 securityHeaders()", () => {
   });
 
   test("a default header can be disabled with false", async () => {
-    const res = await request(app({ frameOptions: false }).server).get("/").expect(200);
+    const res = await request(app({ frameOptions: false }).server)
+      .get("/")
+      .expect(200);
     assert.equal(res.headers["x-frame-options"], undefined);
     assert.equal(res.headers["x-content-type-options"], "nosniff"); // others still on
   });

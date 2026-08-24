@@ -47,7 +47,7 @@ describe("ZH-001 static path traversal", () => {
     await request(app().server).get("/ok.txt").expect(200, "public file");
   });
 
-  const ESCAPES = [
+  const ESCAPES: [string, string][] = [
     ["plain ../", "/../outside-secret.txt"],
     ["nested ../", "/a/b/../../../outside-secret.txt"],
     ["encoded ../ (%2e%2e)", "/%2e%2e/outside-secret.txt"],

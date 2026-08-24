@@ -87,7 +87,12 @@ describe("ZH-002 request smuggling / framing ambiguity", () => {
 
   test("two conflicting Content-Length headers are rejected, not guessed", async () => {
     const payload =
-      "POST / HTTP/1.1\r\n" + "Host: t\r\n" + "Content-Length: 6\r\n" + "Content-Length: 5\r\n" + "\r\n" + "AAAAAA";
+      "POST / HTTP/1.1\r\n" +
+      "Host: t\r\n" +
+      "Content-Length: 6\r\n" +
+      "Content-Length: 5\r\n" +
+      "\r\n" +
+      "AAAAAA";
     const reply = await raw(app.port, payload);
     // Node's parser rejects duplicate/inconsistent CL with a 400 and closes.
     assert.match(reply, /HTTP\/1\.[01] 400/, `expected 400 for conflicting CL, got:\n${reply}`);
